@@ -1,5 +1,4 @@
 'use strict';
-
 const canvas = document.getElementById('glcanvas');
 const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
 
@@ -17,7 +16,8 @@ gl.drawArraysInstancedANGLE = instance_ext.drawArraysInstancedANGLE.bind(instanc
 const timeStart = Date.now()/1000;
 
 // Math utilities 
-const { vec3 } = glMatrix;
+const { vec3, vec2, mat3, mat4, quat } = glMatrix;
+const { toRadian } = glMatrix.glMatrix;
 
 // WINDOW
 const Window = {
@@ -36,10 +36,50 @@ const Window = {
   }
 }
 
+const Input = {
+  keys: {},
+  init() {
+    document.addEventListener('keydown', (e) => {
+      console.log(e.code)
+      this.keys[e.code] = true;
+    });
+
+    document.addEventListener('keyup', (e) => {
+      delete this.keys[e.code];  
+    });
+  }
+}
+
+// CAMERA
+const Camera = {
+  proj: mat4.create(),
+  view: mat4.create(),
+  updatedProj: true,
+  updatedView: false,
+
+  init() {
+    Window.addResizeCallback(this.updateProjection.bind(this));
+    this.updateProjection();
+  },
+  update() {
+    mat4.translate(this.view, this.view, vec3.fromValues(0, 0, 0.01))
+    this.updatedView = true;
+  },
+  updateProjection() {
+    mat4.identity(this.proj);
+    mat4.perspective(this.proj, toRadian(45), canvas.width / canvas.height, 0.1, 100.0);
+    //Render.addUpdate(this.update.bind(this));
+    this.updatedProj = true;
+  }
+}
+
+function getTime() {
+  return (Date.now()/1000)-timeStart;
+}
+
 // RENDER
 const Render = {
   renderUpdateQueue: [],
-  gl: null,
 
   onResizeWindow() {
     gl.viewport(0, 0, canvas.width, canvas.height);
@@ -48,20 +88,34 @@ const Render = {
   update() {
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT); 
+
+    for (let f of this.renderUpdateQueue) {
+      f();
+    }
+
     for (let object of Objects.objects) {
-      gl.uniform1f(object.timeUniform, (Date.now()/1000)-timeStart);
-
+      gl.uniform1f(object.uniforms.time, getTime());
       gl.bindVertexArrayOES(object.vao);
+
+      if (Camera.updatedProj) {
+        gl.uniformMatrix4fv(object.uniforms.proj, gl.FALSE, Camera.proj);
+        Camera.updatedProj = false;
+      }
+
+      if (Camera.updatedView) {
+        gl.uniformMatrix4fv(object.uniforms.view, gl.FALSE, Camera.view);
+        Camera.updatedView = false;
+      }
+
+       
+
       gl.useProgram(object.shaderProgram);
-
-
       gl.drawArraysInstancedANGLE(
         gl.TRIANGLES,
         0,                      // offset
         object.indices.length,   // num vertices per instance
         object.instances.length,  // num instances
       );
-        //gl.drawArrays(object.drawType, 0, object.indices.length);
       
     }
     requestAnimationFrame(() => this.update());
@@ -92,10 +146,12 @@ const Triangle = {
   #endif
 
   attribute vec3 vPos;
-  attribute vec3 position;
+  attribute mat4 model;
+  uniform mat4 view;
+  uniform mat4 proj;
 
   void main(void) {
-    gl_Position = vec4(vPos + position, 1.0);
+    gl_Position = proj * view * model * vec4(vPos, 1.0);
   }
   `,
   fShaderCode: `#version 100
@@ -105,18 +161,31 @@ const Triangle = {
 
   uniform float iTime;
   void main(void) {
-    gl_FragColor = vec4(cos(iTime)/2.0+0.5, 0.0, 0.0, 1.0);
+    gl_FragColor = vec4(cos(iTime)/2.0+0.5, 0.0, 1.0, 1.0);
   }
   `,
   instances: [
     {
-      attrs: {
-        position: [0, 0, 0]
+      pos: vec3.fromValues(0, 0, -10),
+      rot: quat.fromValues(0, 0, 0, 0),
+      update() {
+        mat4.rotateY(this.model, this.model, 0.1);
       }
     },
     {
-      attrs: {
-        position: [1, 0, 0]
+      pos: vec3.fromValues(1, 0, -5),
+      rot: quat.fromValues(0, 0, 0, 0),
+      update() {
+        mat4.rotate(this.model, this.model, 0.2, vec3.fromValues(1, 1, 1))
+        //mat4.translate(this.model, this.model, vec3.fromValues(0, Math.cos(getTime())/10, 0))
+        
+      }
+    },
+    {
+      pos: vec3.fromValues(-1, 0, -3),
+      rot: quat.fromValues(0, 0, 0, 0),
+      update() {
+        mat4.rotateX(this.model, this.model, 0.1);
       }
     }
   ],
@@ -146,10 +215,14 @@ const Objects = {
 
       { // Prepair Buffers
 
-        var vao = gl.createVertexArrayOES();
-        var vbo = gl.createBuffer();
-        var ebo = gl.createBuffer();
-        var pos = gl.createBuffer();
+        object.gpubuffers = {
+          vao: gl.createVertexArrayOES(),
+          vbo: gl.createBuffer(),
+          ebo: gl.createBuffer(),
+          model: gl.createBuffer()
+        };
+
+        var { vao, vbo, ebo, model } = object.gpubuffers;
 
         gl.bindVertexArrayOES(vao);
 
@@ -160,15 +233,32 @@ const Objects = {
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(object.indices), gl.STATIC_DRAW); // Set data indices
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null); // Unbind buffer
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, pos); // Bind pos buffer
-        const arrPositions = [];
-        for (let instance of object.instances) {
-          arrPositions.push(...instance.attrs.position);
-        }
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arrPositions), gl.DYNAMIC_DRAW); // Set object position
-        gl.bindBuffer(gl.ARRAY_BUFFER, null); // Unbind buffer
+        object.buffers = {
+          model: new ArrayBuffer(object.instances.length * 64)
+        };
 
+        object.instances.forEach((instance, c) => {
+          instance.model = new Float32Array(object.buffers.model, c*64, 16);
+          
+          mat4.fromRotationTranslation(instance.model, instance.rot,  instance.pos);
+          instance.sendBuffer = function(buffName) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, object.gpubuffers[buffName]);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, object.buffers[buffName]);
+          } 
+
+          if (instance.update) {
+            Render.addUpdate(instance.update.bind(instance));
+          }
+        });
+        gl.bindBuffer(gl.ARRAY_BUFFER, model);
+        gl.bufferData(gl.ARRAY_BUFFER, object.buffers.model, gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, null); // Unbind buffer
       }
+
+      Render.addUpdate(() => { // Update model each frame
+        gl.bindBuffer(gl.ARRAY_BUFFER, object.gpubuffers['model']);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, object.buffers['model']);
+      });
 
       { // Prepair shaders
 
@@ -192,8 +282,12 @@ const Objects = {
       }
 
       {
-        var vbo_loc = gl.getAttribLocation(shaderProgram, 'vPos');
-        var pos_loc = gl.getAttribLocation(shaderProgram, 'position');
+        object.locations = {
+          vbo: gl.getAttribLocation(shaderProgram, 'vPos'),
+          model: gl.getAttribLocation(shaderProgram, 'model')
+        }
+        var vbo_loc = object.locations.vbo;
+        var model_loc = object.locations.model;
 
         gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
@@ -201,21 +295,42 @@ const Objects = {
         gl.vertexAttribPointer(vbo_loc, 3, gl.FLOAT, false, 0, 0); // Define data location 
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null); // Unbind ebo
         
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, pos);
-        gl.vertexAttribPointer(pos_loc, 3, gl.FLOAT, false, 0, 0);
-        gl.vertexAttribDivisorANGLE(pos_loc, 1);
+        gl.bindBuffer(gl.ARRAY_BUFFER, model);
+        gl.vertexAttribPointer(model_loc    , 4, gl.FLOAT, false, 16 * 4, 0);
+        gl.vertexAttribPointer(model_loc + 1, 4, gl.FLOAT, false, 16 * 4, 4 * 4);
+        gl.vertexAttribPointer(model_loc + 2, 4, gl.FLOAT, false, 16 * 4, 4 * 8);
+        gl.vertexAttribPointer(model_loc + 3, 4, gl.FLOAT, false, 16 * 4, 4 * 12);
+        gl.vertexAttribDivisorANGLE(model_loc, 1);
+        gl.vertexAttribDivisorANGLE(model_loc + 1, 1);
+        gl.vertexAttribDivisorANGLE(model_loc + 2, 1);
+        gl.vertexAttribDivisorANGLE(model_loc + 3, 1);
 
         gl.enableVertexAttribArray(vbo_loc); 
-        gl.enableVertexAttribArray(pos_loc);
-
+        gl.enableVertexAttribArray(model_loc);
+        gl.enableVertexAttribArray(model_loc + 1);
+        gl.enableVertexAttribArray(model_loc + 2);
+        gl.enableVertexAttribArray(model_loc + 3);
       }
 
       {
-        object.timeUniform = gl.getUniformLocation(shaderProgram, 'iTime');
+        object.uniforms = {
+          time: gl.getUniformLocation(shaderProgram, 'iTime'),
+          proj: gl.getUniformLocation(shaderProgram, 'proj'),
+          view: gl.getUniformLocation(shaderProgram, 'view')
+        };
+
+        var proj = mat4.create();
+        mat4.perspective(proj, toRadian(45), canvas.clientWidth / canvas.clientHeight, 0.025, 1000.0);
+        gl.uniformMatrix4fv(object.uniforms.proj, gl.FALSE, proj);
+
+        mat4.translate(Camera.view, Camera.view, vec3.fromValues(0, 0, 0));
+        gl.uniformMatrix4fv(object.uniforms.view, gl.FALSE, Camera.view);
+
+
         object.shaderProgram = shaderProgram;
         object.vao = vao;
         object.vbo = vbo;
+        object.model = model;
       }
 
       object.init();
@@ -228,7 +343,9 @@ if (!gl) {
   alert('webgl not suported');
 } else {
   Window.init();
-  Render.init();
   Objects.init();
+  Camera.init();
+  Input.init();
+  Render.init();
 }
 
