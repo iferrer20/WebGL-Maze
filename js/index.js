@@ -96,7 +96,7 @@ const Render = {
 
     for (let object of Objects.objects) {
       gl.uniform1f(object.uniforms.time, getTime());
-      gl.bindVertexArrayOES(object.vao);
+      gl.bindVertexArrayOES(object.gpubuffers.vao);
 
       if (Camera.updatedProj) {
         gl.uniformMatrix4fv(object.uniforms.proj, gl.FALSE, Camera.proj);
@@ -108,15 +108,15 @@ const Render = {
         Camera.updatedView = false;
       }
 
-       
-
       gl.useProgram(object.shaderProgram);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, object.gpubuffers.ebo);
+       
       gl.drawElementsInstancedANGLE(
         gl.TRIANGLES,
-        object.instances.length,  // num instances
+        object.instances.length * 3,  
         gl.UNSIGNED_SHORT,
         0,
-        0
+        object.instances.length
       );
       
     }
@@ -214,14 +214,14 @@ const Triangle = {
   ],
 
   vertices: [
-    // Back face
-    -0.5, -0.5, 0.5,
-    0.5, -0.5, 0.5,
-    0.5, 0.5, 0.5,
-    -0.5, 0.5, 0.5
+     0.5,  0.5, 0.0,  // top right
+     0.5, -0.5, 0.0,  // bottom right
+    -0.5, -0.5, 0.0,  // bottom left
+    -0.5,  0.5, 0.0   // top left 
   ],
   indices: [
-    0, 1, 2
+    0, 1, 3,
+    1, 2, 3
   ],
 
   init() {
