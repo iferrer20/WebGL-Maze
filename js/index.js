@@ -10,7 +10,7 @@ gl.createVertexArrayOES = oes_vao_ext.createVertexArrayOES.bind(oes_vao_ext);
 // GL Instance support
 const instance_ext = gl.getExtension('ANGLE_instanced_arrays');
 gl.vertexAttribDivisorANGLE = instance_ext.vertexAttribDivisorANGLE.bind(instance_ext);
-gl.drawArraysInstancedANGLE = instance_ext.drawArraysInstancedANGLE.bind(instance_ext);
+gl.drawElementsInstancedANGLE = instance_ext.drawElementsInstancedANGLE.bind(instance_ext);
 
 // Current time start
 const timeStart = Date.now()/1000;
@@ -68,6 +68,7 @@ const Camera = {
   updateProjection() {
     mat4.identity(this.proj);
     mat4.perspective(this.proj, toRadian(45), canvas.width / canvas.height, 0.1, 100.0);
+
     //Render.addUpdate(this.update.bind(this));
     this.updatedProj = true;
   }
@@ -110,15 +111,16 @@ const Render = {
        
 
       gl.useProgram(object.shaderProgram);
-      gl.drawArraysInstancedANGLE(
+      gl.drawElementsInstancedANGLE(
         gl.TRIANGLES,
-        0,                      // offset
-        object.indices.length,   // num vertices per instance
         object.instances.length,  // num instances
+        gl.UNSIGNED_SHORT,
+        0,
+        0
       );
       
     }
-    requestAnimationFrame(() => this.update());
+    requestAnimationFrame(this.update.bind(this));
   },
 
   addUpdate(f) {
@@ -176,26 +178,51 @@ const Triangle = {
       pos: vec3.fromValues(1, 0, -5),
       rot: quat.fromValues(0, 0, 0, 0),
       update() {
-        mat4.rotate(this.model, this.model, 0.2, vec3.fromValues(1, 1, 1))
-        //mat4.translate(this.model, this.model, vec3.fromValues(0, Math.cos(getTime())/10, 0))
+        //mat4.rotate(this.model, this.model, 0.2, vec3.fromValues(1, 1, 1))
+
+        let d = vec3.create();
+        if (Input.keys['KeyA']) {
+          d[0] += -0.1;
+        } 
+        if (Input.keys['KeyD']) {
+          d[0] += 0.1;
+        } 
+        if (Input.keys['KeyW']) {
+          d[1] += 0.1;
+        } 
+        if (Input.keys['KeyS']) {
+          d[1] += -0.1;
+        }
+
+        if (Input.keys['ArrowRight']) {
+          mat4.rotateY(this.model, this.model, 0.1);
+        } 
+        if (Input.keys['ArrowLeft']) {
+          mat4.rotateY(this.model, this.model, -0.1);
+        } 
+        if (Input.keys['ArrowUp']) {
+          mat4.rotateX(this.model, this.model, 0.1);
+        } 
+        if (Input.keys['ArrowDown']) {
+          mat4.rotateX(this.model, this.model, -0.1);
+        }
+
+        mat4.translate(this.model, this.model, d)
         
-      }
-    },
-    {
-      pos: vec3.fromValues(-1, 0, -3),
-      rot: quat.fromValues(0, 0, 0, 0),
-      update() {
-        mat4.rotateX(this.model, this.model, 0.1);
       }
     }
   ],
 
   vertices: [
-    -0.5,0.5,0.0,
-    -0.5,-0.5,0.0,
-    0.5,-0.5,0.0
+    // Back face
+    -0.5, -0.5, 0.5,
+    0.5, -0.5, 0.5,
+    0.5, 0.5, 0.5,
+    -0.5, 0.5, 0.5
   ],
-  indices: [0, 1, 2],
+  indices: [
+    0, 1, 2
+  ],
 
   init() {
 
