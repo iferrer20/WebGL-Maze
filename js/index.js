@@ -40,7 +40,6 @@ const Input = {
   keys: {},
   init() {
     document.addEventListener('keydown', (e) => {
-      console.log(e.code)
       this.keys[e.code] = true;
     });
 
@@ -54,23 +53,25 @@ const Input = {
 const Camera = {
   proj: mat4.create(),
   view: mat4.create(),
-  updatedProj: true,
-  updatedView: false,
 
   init() {
     Window.addResizeCallback(this.updateProjection.bind(this));
     this.updateProjection();
   },
+
+  updateUniforms(object) {
+    gl.uniformMatrix4fv(object.uniforms.proj, gl.FALSE, this.proj);
+    gl.uniformMatrix4fv(object.uniforms.view, gl.FALSE, this.view);
+  },
   update() {
     mat4.translate(this.view, this.view, vec3.fromValues(0, 0, 0.01))
-    this.updatedView = true;
   },
   updateProjection() {
     mat4.identity(this.proj);
-    mat4.perspective(this.proj, toRadian(45), canvas.width / canvas.height, 0.1, 100.0);
-
+    mat4.identity(this.view);
+    mat4.perspective(this.proj, toRadian(45), canvas.clientWidth / canvas.clientHeight, 0.025, 1000.0);
+    mat4.translate(this.view, this.view, vec3.fromValues(0, 0, -8));
     //Render.addUpdate(this.update.bind(this));
-    this.updatedProj = true;
   }
 }
 
@@ -96,29 +97,19 @@ const Render = {
 
     for (let object of Objects.objects) {
       gl.uniform1f(object.uniforms.time, getTime());
-      gl.bindVertexArrayOES(object.gpubuffers.vao);
-
-      if (Camera.updatedProj) {
-        gl.uniformMatrix4fv(object.uniforms.proj, gl.FALSE, Camera.proj);
-        Camera.updatedProj = false;
-      }
-
-      if (Camera.updatedView) {
-        gl.uniformMatrix4fv(object.uniforms.view, gl.FALSE, Camera.view);
-        Camera.updatedView = false;
-      }
+      gl.bindVertexArrayOES(object.vao);
 
       gl.useProgram(object.shaderProgram);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, object.gpubuffers.ebo);
        
       gl.drawElementsInstancedANGLE(
-        gl.TRIANGLES,
-        object.instances.length * 3,  
+        object.drawType,
+        object.indices.length,  
         gl.UNSIGNED_SHORT,
         0,
         object.instances.length
       );
-      
+    
     }
     requestAnimationFrame(this.update.bind(this));
   },
@@ -141,14 +132,14 @@ const Render = {
 
 const Triangle = {
   drawType: gl.TRIANGLES,
-
   vShaderCode: `#version 100
   #ifdef GL_ES
   precision mediump float;
   #endif
 
   attribute vec3 vPos;
-  attribute mat4 model;
+  attribute mat4 model; 
+
   uniform mat4 view;
   uniform mat4 proj;
 
@@ -168,15 +159,14 @@ const Triangle = {
   `,
   instances: [
     {
-      pos: vec3.fromValues(0, 0, -10),
-      rot: quat.fromValues(0, 0, 0, 0),
+      init() {
+        mat4.translate(this.model, this.model, vec3.fromValues(-3,0,0))
+      },
       update() {
-        mat4.rotateY(this.model, this.model, 0.1);
+        //mat4.rotateY(this.model, this.model, 0.1);
       }
     },
     {
-      pos: vec3.fromValues(1, 0, -5),
-      rot: quat.fromValues(0, 0, 0, 0),
       update() {
         //mat4.rotate(this.model, this.model, 0.2, vec3.fromValues(1, 1, 1))
 
@@ -213,21 +203,27 @@ const Triangle = {
     }
   ],
 
-  vertices: [
-     0.5,  0.5, 0.0,  // top right
-     0.5, -0.5, 0.0,  // bottom right
-    -0.5, -0.5, 0.0,  // bottom left
-    -0.5,  0.5, 0.0   // top left 
-  ],
-  indices: [
+  attrs: { // Object global attributes
+    vPos: { 
+      data: new Float32Array([
+        0.5,  0.5, 0.0,  // top right
+        0.5, -0.5, 0.0,  // bottom right
+       -0.5, -0.5, 0.0,  // bottom left
+       -0.5,  0.5, 0.0   // top left 
+      ]),
+    },
+    model: {
+      data: mat4.create(),
+      instanced: true,
+      dynamic: true
+    }
+  },
+  indices: new Uint16Array([
     0, 1, 3,
     1, 2, 3
-  ],
+  ]),
 
   init() {
-
-  },
-  update() {
 
   }
 }
@@ -239,53 +235,6 @@ const Objects = {
 
   init() {
     for (let object of this.objects) {
-
-      { // Prepair Buffers
-
-        object.gpubuffers = {
-          vao: gl.createVertexArrayOES(),
-          vbo: gl.createBuffer(),
-          ebo: gl.createBuffer(),
-          model: gl.createBuffer()
-        };
-
-        var { vao, vbo, ebo, model } = object.gpubuffers;
-
-        gl.bindVertexArrayOES(vao);
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, vbo); // Bind vbo buffer
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(object.vertices), gl.STATIC_DRAW); // Set data
-
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo); // Bind ebo buffer
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(object.indices), gl.STATIC_DRAW); // Set data indices
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null); // Unbind buffer
-
-        object.buffers = {
-          model: new ArrayBuffer(object.instances.length * 64)
-        };
-
-        object.instances.forEach((instance, c) => {
-          instance.model = new Float32Array(object.buffers.model, c*64, 16);
-          
-          mat4.fromRotationTranslation(instance.model, instance.rot,  instance.pos);
-          instance.sendBuffer = function(buffName) {
-            gl.bindBuffer(gl.ARRAY_BUFFER, object.gpubuffers[buffName]);
-            gl.bufferSubData(gl.ARRAY_BUFFER, 0, object.buffers[buffName]);
-          } 
-
-          if (instance.update) {
-            Render.addUpdate(instance.update.bind(instance));
-          }
-        });
-        gl.bindBuffer(gl.ARRAY_BUFFER, model);
-        gl.bufferData(gl.ARRAY_BUFFER, object.buffers.model, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, null); // Unbind buffer
-      }
-
-      Render.addUpdate(() => { // Update model each frame
-        gl.bindBuffer(gl.ARRAY_BUFFER, object.gpubuffers['model']);
-        gl.bufferSubData(gl.ARRAY_BUFFER, 0, object.buffers['model']);
-      });
 
       { // Prepair shaders
 
@@ -308,58 +257,113 @@ const Objects = {
         gl.useProgram(shaderProgram);
       }
 
-      {
-        object.locations = {
-          vbo: gl.getAttribLocation(shaderProgram, 'vPos'),
-          model: gl.getAttribLocation(shaderProgram, 'model')
+      { // Buffers & locations
+        object.gpubuffers = {};
+        object.buffers = {};
+        object.locations = {};
+        object.buffers = {};
+
+        object.vao = gl.createVertexArrayOES();
+        gl.bindVertexArrayOES(object.vao);
+
+        if (object.indices) {
+          let ebo = gl.createBuffer();
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+          gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, object.indices, gl.STATIC_DRAW);
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null); // Unbind buffer
+          object.gpubuffers.ebo = ebo;
         }
-        var vbo_loc = object.locations.vbo;
-        var model_loc = object.locations.model;
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+        for (let attr of Object.keys(object.attrs)) {
+          
+          let { data, instanced, dynamic } = object.attrs[attr];
+          let gpubuff = gl.createBuffer();
+          let loc = gl.getAttribLocation(shaderProgram, attr);
 
-        gl.vertexAttribPointer(vbo_loc, 3, gl.FLOAT, false, 0, 0); // Define data location 
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null); // Unbind ebo
-        
-        gl.bindBuffer(gl.ARRAY_BUFFER, model);
-        gl.vertexAttribPointer(model_loc    , 4, gl.FLOAT, false, 16 * 4, 0);
-        gl.vertexAttribPointer(model_loc + 1, 4, gl.FLOAT, false, 16 * 4, 4 * 4);
-        gl.vertexAttribPointer(model_loc + 2, 4, gl.FLOAT, false, 16 * 4, 4 * 8);
-        gl.vertexAttribPointer(model_loc + 3, 4, gl.FLOAT, false, 16 * 4, 4 * 12);
-        gl.vertexAttribDivisorANGLE(model_loc, 1);
-        gl.vertexAttribDivisorANGLE(model_loc + 1, 1);
-        gl.vertexAttribDivisorANGLE(model_loc + 2, 1);
-        gl.vertexAttribDivisorANGLE(model_loc + 3, 1);
+          let buff;
+          if (instanced) {
+            buff = new ArrayBuffer(data.byteLength * object.instances.length);
+            object.instances.forEach((instance, c) => {
+              instance[attr] = new data.__proto__.constructor(buff, c*data.byteLength, data.length);
+              instance[attr].set(data);
+            });
+          } else {
+            buff = data; 
+          }
 
-        gl.enableVertexAttribArray(vbo_loc); 
-        gl.enableVertexAttribArray(model_loc);
-        gl.enableVertexAttribArray(model_loc + 1);
-        gl.enableVertexAttribArray(model_loc + 2);
-        gl.enableVertexAttribArray(model_loc + 3);
+          const { type } = gl.getActiveAttrib(shaderProgram, loc);
+
+          gl.bindBuffer(gl.ARRAY_BUFFER, gpubuff);
+          gl.bufferData(gl.ARRAY_BUFFER, buff, dynamic ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW); // Set data
+          
+          switch (type) {
+            case 35676: // MAT4
+              gl.vertexAttribPointer(loc    , 4, gl.FLOAT, false, 16 * 4, 0);
+              gl.vertexAttribPointer(loc + 1, 4, gl.FLOAT, false, 16 * 4, 4 * 4);
+              gl.vertexAttribPointer(loc + 2, 4, gl.FLOAT, false, 16 * 4, 4 * 8);
+              gl.vertexAttribPointer(loc + 3, 4, gl.FLOAT, false, 16 * 4, 4 * 12);
+
+              if (instanced) {
+                gl.vertexAttribDivisorANGLE(loc + 1, 1);
+                gl.vertexAttribDivisorANGLE(loc + 2, 1);
+                gl.vertexAttribDivisorANGLE(loc + 3, 1);
+              }
+
+              gl.enableVertexAttribArray(loc + 1);
+              gl.enableVertexAttribArray(loc + 2);
+              gl.enableVertexAttribArray(loc + 3);
+              break;
+
+            case 35664: // VEC2
+              gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+              break;
+
+            case 35665: // VEC3
+              gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+              break;
+          }
+
+          if (instanced) {
+            gl.vertexAttribDivisorANGLE(loc, 1);
+          }
+
+          gl.enableVertexAttribArray(loc);
+
+          object.locations[attr] = loc;
+          object.buffers[attr] = buff;
+          object.gpubuffers[attr] = gpubuff;
+
+          if (dynamic) {
+            Render.addUpdate(() => {
+              gl.bindBuffer(gl.ARRAY_BUFFER, gpubuff);
+              gl.bufferSubData(gl.ARRAY_BUFFER, 0, object.buffers[attr]);
+            });
+          }
+
+        }
+
+        { // Uniforms
+          object.uniforms = {};
+          let uniforms = gl.getProgramParameter(shaderProgram, gl.ACTIVE_UNIFORMS);
+          for (let i=0; i<uniforms; i++) {
+            let { name } = gl.getActiveUniform(shaderProgram, i);
+            object.uniforms[name] = gl.getUniformLocation(shaderProgram, name);
+          }
+
+          Render.addUpdate(Camera.updateUniforms.bind(Camera, object));
+        }
+
+        object.instances.forEach((instance, c) => {
+          if (instance.init) {
+            instance.init();
+          }
+
+          if (instance.update) {
+            Render.addUpdate(instance.update.bind(instance));
+          }
+        });
       }
-
-      {
-        object.uniforms = {
-          time: gl.getUniformLocation(shaderProgram, 'iTime'),
-          proj: gl.getUniformLocation(shaderProgram, 'proj'),
-          view: gl.getUniformLocation(shaderProgram, 'view')
-        };
-
-        var proj = mat4.create();
-        mat4.perspective(proj, toRadian(45), canvas.clientWidth / canvas.clientHeight, 0.025, 1000.0);
-        gl.uniformMatrix4fv(object.uniforms.proj, gl.FALSE, proj);
-
-        mat4.translate(Camera.view, Camera.view, vec3.fromValues(0, 0, 0));
-        gl.uniformMatrix4fv(object.uniforms.view, gl.FALSE, Camera.view);
-
-
-        object.shaderProgram = shaderProgram;
-        object.vao = vao;
-        object.vbo = vbo;
-        object.model = model;
-      }
-
+      object.shaderProgram = shaderProgram;
       object.init();
     }
     
