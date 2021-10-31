@@ -14,6 +14,12 @@ gl.drawElementsInstancedANGLE = instance_ext.drawElementsInstancedANGLE.bind(ins
 
 // Current time start
 const timeStart = Date.now()/1000;
+var timeLastFrame = Date.now();
+var deltaTime = Date.now();
+
+function getTime() {
+  return (Date.now()/1000)-timeStart;
+}
 
 // Math utilities 
 const { vec3, vec2, mat3, mat4, quat } = glMatrix;
@@ -57,26 +63,26 @@ const Camera = {
   init() {
     Window.addResizeCallback(this.updateProjection.bind(this));
     this.updateProjection();
+    Render.addUpdate(this.update.bind(this));
   },
 
-  updateUniforms(object) {
-    gl.uniformMatrix4fv(object.uniforms.proj, gl.FALSE, this.proj);
-    gl.uniformMatrix4fv(object.uniforms.view, gl.FALSE, this.view);
+  updateUniforms() {
+    Shaders.forEach(shader => {
+      gl.useProgram(shader.program);
+      gl.uniformMatrix4fv(shader.uniforms.proj, gl.FALSE, this.proj);
+      gl.uniformMatrix4fv(shader.uniforms.view, gl.FALSE, this.view);
+    });
   },
   update() {
-    mat4.translate(this.view, this.view, vec3.fromValues(0, 0, 0.01))
+    
   },
   updateProjection() {
     mat4.identity(this.proj);
     mat4.identity(this.view);
     mat4.perspective(this.proj, toRadian(45), canvas.clientWidth / canvas.clientHeight, 0.025, 1000.0);
     mat4.translate(this.view, this.view, vec3.fromValues(0, 0, -8));
-    //Render.addUpdate(this.update.bind(this));
+    this.updateUniforms();
   }
-}
-
-function getTime() {
-  return (Date.now()/1000)-timeStart;
 }
 
 // RENDER
@@ -88,7 +94,12 @@ const Render = {
   },
 
   update() {
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+    // Delta time
+    deltaTime = Date.now()-timeLastFrame;
+    deltaTime /= 10;
+    timeLastFrame = Date.now();
+
+    gl.clearColor(0.1, 0.0, 0.3, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT); 
 
     for (let f of this.renderUpdateQueue) {
@@ -96,12 +107,11 @@ const Render = {
     }
 
     for (let object of Objects.objects) {
-      gl.uniform1f(object.uniforms.time, getTime());
       gl.bindVertexArrayOES(object.vao);
 
       gl.useProgram(object.shaderProgram);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, object.gpubuffers.ebo);
-       
+
       gl.drawElementsInstancedANGLE(
         object.drawType,
         object.indices.length,  
@@ -122,48 +132,103 @@ const Render = {
 
     Window.addResizeCallback(this.onResizeWindow);
     this.onResizeWindow();
-    // gl.enable(gl.DEPTH_TEST);
-    // gl.depthFunc(gl.LEQUAL);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
 
 
     this.update();
   }
 }
 
-const Triangle = {
+// WORLD
+const World = {
+  init() {
+    Render.addUpdate(this.update.bind(this));
+  },
+  update() {
+    Shaders.forEach(shader => gl.uniform1f(shader.uniforms.iTime, getTime()));
+  },
+}
+
+// SHADERS
+const Shaders = {
+  shaders: {
+    myshader: {
+      vCode: `#version 100
+        #ifdef GL_ES
+        precision mediump float;
+        #endif
+
+        attribute vec3 vPos;
+        attribute mat4 model; 
+
+        uniform mat4 view;
+        uniform mat4 proj;
+
+        void main(void) {
+          gl_Position = proj * view * model * vec4(vPos, 1.0);
+        }
+      `,
+      fCode: `#version 100
+        #ifdef GL_ES
+        precision mediump float;
+        #endif
+
+        uniform float iTime;
+        void main(void) {
+          gl_FragColor = vec4(cos(iTime), 0.0, 1.0, 1.0);
+        }
+      `,
+    }
+  },
+  forEach(f) {
+    Object.values(this.shaders).forEach(f);
+  },
+  update() {
+
+  },
+  init() {
+    for (const [name, shader] of Object.entries(this.shaders)) {
+      var shaderProgram = gl.createProgram();
+
+      var vShader = gl.createShader(gl.VERTEX_SHADER);
+      var fShader = gl.createShader(gl.FRAGMENT_SHADER);
+
+      gl.shaderSource(vShader, shader.vCode);
+      gl.shaderSource(fShader, shader.fCode);
+
+      gl.compileShader(vShader);
+      gl.compileShader(fShader);
+
+      gl.attachShader(shaderProgram, vShader);
+      gl.attachShader(shaderProgram, fShader);
+
+      gl.linkProgram(shaderProgram);
+
+      shader.program = shaderProgram;
+
+      shader.uniforms = {};
+      let n_uniforms = gl.getProgramParameter(shaderProgram, gl.ACTIVE_UNIFORMS);
+      for (let i=0; i<n_uniforms; i++) {
+        let { name } = gl.getActiveUniform(shaderProgram, i);
+        shader.uniforms[name] = gl.getUniformLocation(shaderProgram, name);
+      }
+    }
+    Render.addUpdate(this.update.bind(this));
+  }
+}
+
+// CUBE
+const Cube = {
   drawType: gl.TRIANGLES,
-  vShaderCode: `#version 100
-  #ifdef GL_ES
-  precision mediump float;
-  #endif
-
-  attribute vec3 vPos;
-  attribute mat4 model; 
-
-  uniform mat4 view;
-  uniform mat4 proj;
-
-  void main(void) {
-    gl_Position = proj * view * model * vec4(vPos, 1.0);
-  }
-  `,
-  fShaderCode: `#version 100
-  #ifdef GL_ES
-  precision mediump float;
-  #endif
-
-  uniform float iTime;
-  void main(void) {
-    gl_FragColor = vec4(cos(iTime)/2.0+0.5, 0.0, 1.0, 1.0);
-  }
-  `,
+  shaderProgram: 'myshader',
   instances: [
     {
       init() {
         mat4.translate(this.model, this.model, vec3.fromValues(-3,0,0))
       },
       update() {
-        //mat4.rotateY(this.model, this.model, 0.1);
+        mat4.rotate(this.model, this.model, 0.01 * deltaTime, vec3.fromValues(1, 1, 1));
       }
     },
     {
@@ -172,33 +237,48 @@ const Triangle = {
 
         let d = vec3.create();
         if (Input.keys['KeyA']) {
-          d[0] += -0.1;
+          d[0] += -0.1 * deltaTime;
         } 
         if (Input.keys['KeyD']) {
-          d[0] += 0.1;
+          d[0] += 0.1 * deltaTime;
         } 
         if (Input.keys['KeyW']) {
-          d[1] += 0.1;
+          d[1] += 0.1 * deltaTime;
         } 
         if (Input.keys['KeyS']) {
-          d[1] += -0.1;
+          d[1] += -0.1 * deltaTime;
         }
 
         if (Input.keys['ArrowRight']) {
-          mat4.rotateY(this.model, this.model, 0.1);
+          mat4.rotateY(this.model, this.model, 0.1 * deltaTime);
         } 
         if (Input.keys['ArrowLeft']) {
-          mat4.rotateY(this.model, this.model, -0.1);
+          mat4.rotateY(this.model, this.model, -0.1 * deltaTime);
         } 
         if (Input.keys['ArrowUp']) {
-          mat4.rotateX(this.model, this.model, 0.1);
+          mat4.rotateX(this.model, this.model, 0.1 * deltaTime);
         } 
         if (Input.keys['ArrowDown']) {
-          mat4.rotateX(this.model, this.model, -0.1);
+          mat4.rotateX(this.model, this.model, -0.1 * deltaTime);
         }
 
-        mat4.translate(this.model, this.model, d)
+        mat4.translate(this.model, this.model, d);
         
+      }
+    },
+    {
+      init() {
+        mat4.translate(this.model, this.model, vec3.fromValues(3, 0, 0));
+      },
+      update() {
+        mat4.rotateY(this.model, this.model, 0.01);
+        mat4.translate(this.model, this.model, vec3.fromValues(-0.01, 0, 0));
+        
+      }
+    },
+    {
+      init() {
+        mat4.translate(this.model, this.model, vec3.fromValues(0, 2, 0));
       }
     }
   ],
@@ -206,10 +286,14 @@ const Triangle = {
   attrs: { // Object global attributes
     vPos: { 
       data: new Float32Array([
-        0.5,  0.5, 0.0,  // top right
-        0.5, -0.5, 0.0,  // bottom right
-       -0.5, -0.5, 0.0,  // bottom left
-       -0.5,  0.5, 0.0   // top left 
+        -0.5, 0.5, 0.5,
+        0.5,  0.5, 0.5,
+        0.5, -0.5, 0.5,
+        -0.5,-0.5, 0.5,
+        -0.5, 0.5,-0.5,
+        0.5,  0.5,-0.5,
+        0.5, -0.5,-0.5,
+        -0.5,-0.5,-0.5
       ]),
     },
     model: {
@@ -219,8 +303,18 @@ const Triangle = {
     }
   },
   indices: new Uint16Array([
-    0, 1, 3,
-    1, 2, 3
+		0,3,2,  //Front
+		2,1,0,
+		1,5,6,	//Right
+		6,2,1,
+		5,4,7,	//Left
+		7,6,5,
+		4,7,3,	//Back
+		3,0,4,
+		4,5,1,	//Top
+		1,0,4,
+		3,2,6,	//Bottom
+		6,7,3
   ]),
 
   init() {
@@ -228,33 +322,44 @@ const Triangle = {
   }
 }
 
+// TRIANGLE
+const Triangle = {
+  drawType: gl.TRIANGLES,
+  shaderProgram: 'myshader',
+  instances: [
+    {
+    }
+  ],
+  attrs: {
+    vPos: {
+      data: new Float32Array([
+        -0.5,0.5,0.0,
+        -0.5,-0.5,0.0,
+         0.5,-0.5,0.0
+      ]),
+      
+    },
+    model: {
+       data: mat4.create(),
+       instanced: true,
+       dynamic: true
+    }
+  },
+  indices: new Uint16Array([0, 1, 2])
+  
+}
+
 const Objects = {
   objects: [
+    Cube,
     Triangle
   ],
 
   init() {
     for (let object of this.objects) {
 
-      { // Prepair shaders
-
-        var shaderProgram = gl.createProgram();
-
-        var vShader = gl.createShader(gl.VERTEX_SHADER);
-        var fShader = gl.createShader(gl.FRAGMENT_SHADER);
-
-        gl.shaderSource(vShader, object.vShaderCode);
-        gl.shaderSource(fShader, object.fShaderCode);
-
-        gl.compileShader(vShader);
-        gl.compileShader(fShader);
-
-        gl.attachShader(shaderProgram, vShader);
-        gl.attachShader(shaderProgram, fShader);
-
-        gl.linkProgram(shaderProgram);
-
-        gl.useProgram(shaderProgram);
+      { // Load shader program
+        object.shaderProgram = Shaders.shaders[object.shaderProgram].program;
       }
 
       { // Buffers & locations
@@ -274,11 +379,11 @@ const Objects = {
           object.gpubuffers.ebo = ebo;
         }
 
-        for (let attr of Object.keys(object.attrs)) {
+        for (const attr of Object.keys(object.attrs)) {
           
           let { data, instanced, dynamic } = object.attrs[attr];
           let gpubuff = gl.createBuffer();
-          let loc = gl.getAttribLocation(shaderProgram, attr);
+          let loc = gl.getAttribLocation(object.shaderProgram, attr);
 
           let buff;
           if (instanced) {
@@ -291,7 +396,7 @@ const Objects = {
             buff = data; 
           }
 
-          const { type } = gl.getActiveAttrib(shaderProgram, loc);
+          const { type } = gl.getActiveAttrib(object.shaderProgram, loc);
 
           gl.bindBuffer(gl.ARRAY_BUFFER, gpubuff);
           gl.bufferData(gl.ARRAY_BUFFER, buff, dynamic ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW); // Set data
@@ -342,17 +447,6 @@ const Objects = {
 
         }
 
-        { // Uniforms
-          object.uniforms = {};
-          let uniforms = gl.getProgramParameter(shaderProgram, gl.ACTIVE_UNIFORMS);
-          for (let i=0; i<uniforms; i++) {
-            let { name } = gl.getActiveUniform(shaderProgram, i);
-            object.uniforms[name] = gl.getUniformLocation(shaderProgram, name);
-          }
-
-          Render.addUpdate(Camera.updateUniforms.bind(Camera, object));
-        }
-
         object.instances.forEach((instance, c) => {
           if (instance.init) {
             instance.init();
@@ -363,8 +457,6 @@ const Objects = {
           }
         });
       }
-      object.shaderProgram = shaderProgram;
-      object.init();
     }
     
   }
@@ -374,6 +466,8 @@ if (!gl) {
   alert('webgl not suported');
 } else {
   Window.init();
+  Shaders.init();
+  World.init();
   Objects.init();
   Camera.init();
   Input.init();
