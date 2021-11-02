@@ -151,9 +151,10 @@ const Render = {
 // MAP
 const Map = {
   maps: [
-    [0, 1, -1, 0, 0, 0,
-     0, 0,  1, 0, 0, 0
-    ]
+    [  
+      [0, 1, -1, 0, 0, 0],
+      [0, 0,  1, 0, 0, 0]
+    ],
   ],
 }
 
@@ -206,14 +207,14 @@ const Shaders = {
         varying vec4 FragPos;
 
         uniform vec3 lightPos;  
-        uniform float iTime;
+        //uniform float iTime;
 
         void main(void) {
           vec3 ambient = vec3(0.3);
           vec3 norm = normalize(Normal);
           vec3 lightDir = normalize(lightPos - FragPos.xyz);
           vec3 result = vec3(max(dot(norm, lightDir), 0.4));
-          gl_FragColor = vec4(result + ambient * vec3(cos(iTime*10.0),0,0), 1.0);
+          gl_FragColor = vec4(result + ambient, 1.0);
         }
       `,
     },
@@ -349,10 +350,6 @@ const Cube = {
       }
     },
     {
-      initPos: vec3.fromValues(0,0,0)
-    },
-    {
-      initPos: vec3.fromValues(2,0.0,0,0),
       update() {
         mat4.rotate(this.model, this.model, 0.05 * deltaTime, vec3.fromValues(5, 1, 1));
       }
@@ -396,14 +393,6 @@ const Cube = {
   }
 }
 
-const Gravity = (x) => ({
-  init() {
-    this.force = vec3.create();
-  },
-  update() {
-  }
-});
-
 
 // TRIANGLE
 const Triangle = {
@@ -435,8 +424,8 @@ const Triangle = {
 // OBJECTS
 const Objects = {
   objects: [
-    Cube,
-    Triangle
+    Cube
+    //Triangle
   ],
 
   init() {
@@ -472,16 +461,15 @@ const Objects = {
             gl.drawArraysInstancedANGLE(
               object.drawType,
               0,  
-              object.attrs.aPos.data.length,
+              object.instances.length * 3,
               object.instances.length
             );
           }
         }
 
         
-        let matrixCount = 0;
         for (const attr of Object.keys(object.attrs)) {
-          let { data, instanced, dynamic, repeat } = object.attrs[attr];
+          let { data, instanced, dynamic } = object.attrs[attr];
           let gpubuff = gl.createBuffer();
           const { loc, type } = object.shader.attrs[attr];
 
@@ -514,7 +502,6 @@ const Objects = {
               gl.enableVertexAttribArray(loc + 1);
               gl.enableVertexAttribArray(loc + 2);
               gl.enableVertexAttribArray(loc + 3);
-              matrixCount++;
               break;
 
             case 35664: // VEC2
@@ -528,9 +515,6 @@ const Objects = {
 
           if (instanced) {
             gl.vertexAttribDivisorANGLE(loc, 1);
-          }
-          if (repeat) {
-            gl.vertexAttribDivisorANGLE(loc, 0);
           }
 
           gl.enableVertexAttribArray(loc);
@@ -556,9 +540,9 @@ const Objects = {
             Render.addUpdate(instance.update.bind(instance));
           }
 
-          if (instance.initPos) {
+          /*if (instance.initPos) {
             mat4.translate(instance.model, instance.model, instance.initPos);
-          }
+          }*/
         });
       }
     }
