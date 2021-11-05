@@ -63,8 +63,11 @@ const Camera = {
 
   init() {
     Window.addResizeCallback(this.updateProjection.bind(this));
+
+    mat4.lookAt(this.view, vec3.fromValues(13, 20, 20), vec3.fromValues(13,0,15), vec3.fromValues(0,1,0));
     this.updateProjection();
     Render.addUpdate(this.update.bind(this));
+    
   },
 
   updateUniforms() {
@@ -73,19 +76,37 @@ const Camera = {
   },
   update() {
     
+    if (Input.keys['ArrowLeft']) {
+      mat4.rotateY(this.view, this.view, -0.01 * deltaTime);
+      this.updateUniforms();
+    } 
+    if (Input.keys['ArrowRight']) {
+      mat4.rotateY(this.view, this.view, 0.01 * deltaTime);
+      this.updateUniforms();
+    }
+    if (Input.keys['ArrowUp']) {
+      mat4.translate(this.view, this.view, vec3.fromValues(0, 0.1 * deltaTime, 0.1 * deltaTime));
+      this.updateUniforms();
+    }
+    if (Input.keys['ArrowDown']) {
+      mat4.translate(this.view, this.view, vec3.fromValues(0, -0.1 * deltaTime, -0.1 * deltaTime));
+      this.updateUniforms();
+    }
+
   },
   updateProjection() {
     mat4.identity(this.proj);
-    mat4.identity(this.view);
-    mat4.perspective(this.proj, toRadian(45), canvas.clientWidth / canvas.clientHeight, 0.025, 1000.0);
-    mat4.translate(this.view, this.view, vec3.fromValues(0, 0, -8));
+    //mat4.identity(this.view);
+    mat4.perspective(this.proj, toRadian(70), canvas.clientWidth / canvas.clientHeight, 0.025, 1000.0);
+    
+    
     this.updateUniforms();
   }
 }
 
 // LIGHT
 const Light = {
-  pos: [0, 0, 20],
+  pos: [20, -100, 20],
   init() {
     this.updateUniformPos();
   },
@@ -148,29 +169,27 @@ const Render = {
   }
 }
 
-// MAP
-const Map = {
-  maps: [
-    [  
-      [0, 1, -1, 0, 0, 0],
-      [0, 0,  1, 0, 0, 0]
-    ],
-  ],
-}
+//const Maps = {
+//,
+//}
 
 // WORLD
 const World = {
   init() {
     Render.addUpdate(this.update.bind(this));
+    this.loadMap();
     Objects.init();
     Light.init();
     Camera.init();
-    
-    
+
   },
   update() {
     Shaders.updateUniform('iTime', u => gl.uniform1f(u, getTime()));
   },
+
+  loadMap() {
+    console.log()
+  }
 }
 
 // SHADERS
@@ -195,7 +214,7 @@ const Shaders = {
         void main(void) {
           gl_Position = proj * view * model * vec4(aPos, 1.0);
           FragPos = model * vec4(aPos, 1.0);
-          Normal = abs(mat3(model) * aNormal);
+          Normal = mat3(model) * aNormal;
         }
       `,
       fCode: `#version 100
@@ -213,7 +232,7 @@ const Shaders = {
           vec3 ambient = vec3(0.3);
           vec3 norm = normalize(Normal);
           vec3 lightDir = normalize(lightPos - FragPos.xyz);
-          vec3 result = vec3(max(dot(norm, lightDir), 0.4));
+          vec3 result = vec3(max(dot(norm, lightDir), 0.2));
           gl_FragColor = vec4(result + ambient, 1.0);
         }
       `,
@@ -309,12 +328,51 @@ const Shaders = {
   }
 }
 
-// CUBE
-const Cube = {
+function matFromPosRot(pos, rot) {
+  const m = mat4.create();
+  const r = quat.create();
+
+  quat.fromEuler(r, rot[0], rot[1], rot[2]);
+  mat4.fromRotationTranslation(m, r, pos);
+
+  return m;
+  
+}
+
+// GAMEMAP
+const GameMap = {
   drawType: gl.TRIANGLES,
   shader: Shaders.shaders.myshader,
+  maps: [
+    [  // LVL 1 
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+    ],
+  ],
   instances: [
-    {
+    /*{
+      model: mat4.create(),
+      init() {
+        mat4.fromTranslation(this.model, vec3.fromValues(-10,0,0));
+      },
       update() {
         //mat4.rotate(this.model, this.model, 0.2, vec3.fromValues(1, 1, 1))
 
@@ -332,28 +390,17 @@ const Cube = {
           d[1] += -0.1 * deltaTime;
         }
 
-        if (Input.keys['ArrowRight']) {
+        if (Input.keys['ArrowUp']) {
           mat4.rotateY(this.model, this.model, 0.1 * deltaTime);
         } 
-        if (Input.keys['ArrowLeft']) {
-          mat4.rotateY(this.model, this.model, -0.1 * deltaTime);
-        } 
-        if (Input.keys['ArrowUp']) {
-          mat4.rotateX(this.model, this.model, 0.1 * deltaTime);
-        } 
         if (Input.keys['ArrowDown']) {
-          mat4.rotateX(this.model, this.model, -0.1 * deltaTime);
+          mat4.rotateY(this.model, this.model, -0.1 * deltaTime);
         }
 
         mat4.translate(this.model, this.model, d);
         
       }
-    },
-    {
-      update() {
-        mat4.rotate(this.model, this.model, 0.05 * deltaTime, vec3.fromValues(5, 1, 1));
-      }
-    }
+    },*/
   ],
 
   attrs: { // Object global attributes
@@ -369,8 +416,7 @@ const Cube = {
     },
     model: {
       data: mat4.create(),
-      instanced: true,
-      dynamic: true
+      instanced: true
     },
     aNormal: {
       data: new Float32Array([
@@ -382,14 +428,74 @@ const Cube = {
         1, 1, 1,
       ])
     }
-    /*aNormal: {
-      data: vec3.fromValues(1,2,4),
-      repeat: true
-    }*/
+  },
+
+  prepareMap(n) {
+    const map = this.maps[n-1];
+    const setBlock = (pos) => {
+     this.instances.push(
+      {
+        model: matFromPosRot(vec3.fromValues(pos[0],pos[1],pos[2]+0.5), vec3.fromValues(0,0,0))
+      },
+      {
+        model: matFromPosRot(vec3.fromValues(pos[0],pos[1],pos[2]-0.5), vec3.fromValues(0,0,0))
+      },
+      {
+        model: matFromPosRot(vec3.fromValues(pos[0]+0.5,pos[1],pos[2]), vec3.fromValues(0,90,0))
+      },
+      {
+        model: matFromPosRot(vec3.fromValues(pos[0]-0.5,pos[1],pos[2]), vec3.fromValues(0,90,0))
+      },
+      {
+        model: matFromPosRot(vec3.fromValues(pos[0],pos[1]+0.5,pos[2]), vec3.fromValues(90,0,0))
+      }
+      );
+    }
+
+    let y = 0;
+
+    for (let i=-1; i<=map[0].length;i++) {
+      setBlock(vec3.fromValues(i,0,-1));
+      setBlock(vec3.fromValues(i,0,map.length));
+    }
+
+    for (const row of map) {
+      let x = 0;
+      setBlock(vec3.fromValues(x-1,0,y));
+
+      for (const el of row) {
+        switch (el) {
+          case 0:
+            this.instances.push({
+              model: matFromPosRot(vec3.fromValues(x, -0.5, y), vec3.fromValues(90,0,0))
+            });
+            break;
+          case 1:
+            setBlock(vec3.fromValues(x,0,y));
+            break;
+          case -1:
+            break;
+        
+          default:
+            break;
+        }
+
+        x++;
+      }
+
+      setBlock(vec3.fromValues(x,0,y));
+
+      y++;
+    }
+/*    for (let i=1; i<20; i++) {
+      const model = mat4.create();
+
+    }
+    */
   },
 
   init() {
-
+    this.prepareMap(1);
   }
 }
 
@@ -413,8 +519,7 @@ const Triangle = {
     },
     model: {
        data: mat4.create(),
-       instanced: true,
-       dynamic: true
+       instanced: true
     }
   },
   indices: new Uint16Array([0, 1, 2])
@@ -424,13 +529,13 @@ const Triangle = {
 // OBJECTS
 const Objects = {
   objects: [
-    Cube
+    GameMap
     //Triangle
   ],
 
   init() {
     for (let object of this.objects) {
-
+      object.init();
       { // Buffers & locations
         object.gpubuffers = {};
         object.buffers = {};
@@ -461,13 +566,22 @@ const Objects = {
             gl.drawArraysInstancedANGLE(
               object.drawType,
               0,  
-              object.instances.length * 3,
+              object.attrs.aPos.data.length/3,
               object.instances.length
             );
           }
         }
 
-        
+        object.instances.forEach((instance, c) => {
+          if (instance.init) {
+            instance.init();
+          }
+
+          if (instance.update) {
+            Render.addUpdate(instance.update.bind(instance));
+          }
+        });
+
         for (const attr of Object.keys(object.attrs)) {
           let { data, instanced, dynamic } = object.attrs[attr];
           let gpubuff = gl.createBuffer();
@@ -477,8 +591,13 @@ const Objects = {
           if (instanced) {
             buff = new ArrayBuffer(data.byteLength * object.instances.length);
             object.instances.forEach((instance, c) => {
-              instance[attr] = new data.__proto__.constructor(buff, c*data.byteLength, data.length);
-              instance[attr].set(data);
+              const newbuff = new data.__proto__.constructor(buff, c*data.byteLength, data.length);
+              if (instance[attr]) {
+                newbuff.set(instance[attr]);
+              } else {
+                newbuff.set(data);
+              }
+              instance[attr] = newbuff;
             });
           } else {
             buff = data; 
@@ -531,19 +650,7 @@ const Objects = {
 
         }
 
-        object.instances.forEach((instance, c) => {
-          if (instance.init) {
-            instance.init();
-          }
-
-          if (instance.update) {
-            Render.addUpdate(instance.update.bind(instance));
-          }
-
-          /*if (instance.initPos) {
-            mat4.translate(instance.model, instance.model, instance.initPos);
-          }*/
-        });
+        
       }
     }
     
