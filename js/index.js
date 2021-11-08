@@ -67,6 +67,8 @@ const Camera = {
     mat4.lookAt(this.view, vec3.fromValues(13, 20, 20), vec3.fromValues(13,0,15), vec3.fromValues(0,1,0));
     this.updateProjection();
     Render.addUpdate(this.update.bind(this));
+    this.r = toRadian(90); // Ratio pos deg
+    this.rdistance = 5; // Ratio distance
     
   },
 
@@ -77,36 +79,44 @@ const Camera = {
   update() {
     
     if (Input.keys['ArrowLeft']) {
-      mat4.rotateY(this.view, this.view, -0.01 * deltaTime);
       this.updateUniforms();
+      this.r += 0.025 * deltaTime;
     } 
     if (Input.keys['ArrowRight']) {
-      mat4.rotateY(this.view, this.view, 0.01 * deltaTime);
       this.updateUniforms();
+      this.r -= 0.025 * deltaTime;
     }
     if (Input.keys['ArrowUp']) {
-      mat4.translate(this.view, this.view, vec3.fromValues(0, 0.1 * deltaTime, 0.1 * deltaTime));
+      this.rdistance -= 0.1 * deltaTime;
       this.updateUniforms();
     }
     if (Input.keys['ArrowDown']) {
-      mat4.translate(this.view, this.view, vec3.fromValues(0, -0.1 * deltaTime, -0.1 * deltaTime));
+      this.rdistance += 0.1 * deltaTime;
       this.updateUniforms();
     }
+
+    this.camX = Math.cos(this.r) * this.rdistance;
+    this.camY = Math.sin(this.r) * this.rdistance;
+
+    let pointToView = vec3.fromValues(GameMap.maps[0][0].length/2, 0, GameMap.maps[0].length/2);
+    let x = vec3.create();
+    vec3.add(x, vec3.fromValues(this.camX, 20, this.camY), pointToView);
+
+    mat4.lookAt(this.view, x, pointToView, vec3.fromValues(0,1,0));
+    this.updateProjection();
 
   },
   updateProjection() {
     mat4.identity(this.proj);
     //mat4.identity(this.view);
-    mat4.perspective(this.proj, toRadian(70), canvas.clientWidth / canvas.clientHeight, 0.025, 1000.0);
-    
-    
+    mat4.perspective(this.proj, toRadian(45), canvas.clientWidth / canvas.clientHeight, 0.025, 1000.0);
     this.updateUniforms();
   }
 }
 
 // LIGHT
 const Light = {
-  pos: [20, -100, 20],
+  pos: [40, -20, 20],
   init() {
     this.updateUniformPos();
   },
@@ -232,7 +242,7 @@ const Shaders = {
           vec3 ambient = vec3(0.3);
           vec3 norm = normalize(Normal);
           vec3 lightDir = normalize(lightPos - FragPos.xyz);
-          vec3 result = vec3(max(dot(norm, lightDir), 0.2));
+          vec3 result = vec3(dot(norm, lightDir));
           gl_FragColor = vec4(result + ambient, 1.0);
         }
       `,
@@ -345,26 +355,18 @@ const GameMap = {
   shader: Shaders.shaders.myshader,
   maps: [
     [  // LVL 1 
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
     ],
   ],
   instances: [
@@ -425,7 +427,7 @@ const GameMap = {
         1, 1, 1,
         1, 1, 1,
         1, 1, 1,
-        1, 1, 1,
+        1, 1, 1
       ])
     }
   },
@@ -506,6 +508,7 @@ const Triangle = {
   shader: Shaders.shaders.red,
   instances: [
     {
+      model: matFromPosRot(vec3.create(0,0,0), vec3.create(0,0,0))
     }
   ],
   attrs: {
@@ -535,7 +538,10 @@ const Objects = {
 
   init() {
     for (let object of this.objects) {
-      object.init();
+      if (object.init) {
+        object.init();
+      }
+      
       { // Buffers & locations
         object.gpubuffers = {};
         object.buffers = {};
