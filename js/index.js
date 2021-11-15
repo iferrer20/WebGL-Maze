@@ -6,6 +6,7 @@ const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl')
 const oes_vao_ext = gl.getExtension('OES_vertex_array_object');
 gl.bindVertexArrayOES = oes_vao_ext.bindVertexArrayOES.bind(oes_vao_ext);
 gl.createVertexArrayOES = oes_vao_ext.createVertexArrayOES.bind(oes_vao_ext);
+gl.deleteVertexArrayOES = oes_vao_ext.deleteVertexArrayOES.bind(oes_vao_ext);
 
 // GL Instance support
 const instance_ext = gl.getExtension('ANGLE_instanced_arrays');
@@ -17,6 +18,7 @@ gl.drawArraysInstancedANGLE = instance_ext.drawArraysInstancedANGLE.bind(instanc
 const timeStart = Date.now()/1000;
 var timeLastFrame = Date.now();
 var deltaTime = Date.now();
+var nextSecond = 0;
 
 function getTime() {
   return (Date.now()/1000)-timeStart;
@@ -24,7 +26,21 @@ function getTime() {
 
 // Math utilities 
 const { vec3, vec2, mat3, mat4, quat } = glMatrix;
-const { toRadian } = glMatrix.glMatrix;
+const { toRadian } = glMatrix.glMatrix; 
+
+// GAME
+const Game = {
+  level: 1,
+  deaths: 0,
+  infoDom: document.getElementById('game-info'),
+  updateGameInfo() {
+    this.infoDom.innerText = `
+    Level: ${this.level}
+    Attempts: ${this.deaths}
+    `;
+  }
+}
+Game.updateGameInfo();
 
 // WINDOW
 const Window = {
@@ -60,55 +76,79 @@ const Input = {
 const Camera = {
   proj: mat4.create(),
   view: mat4.create(),
+  force: vec3.create(),
+  linearDrag: 0.9,
+  moveSpeed: 0.005,
+  rx: toRadian(90),
+  ry: toRadian(90),
+  rdistance: 20,
 
   init() {
     Window.addResizeCallback(this.updateProjection.bind(this));
 
-    mat4.lookAt(this.view, vec3.fromValues(13, 20, 20), vec3.fromValues(13,0,15), vec3.fromValues(0,1,0));
     this.updateProjection();
-    Render.addUpdate(this.update.bind(this));
-    this.r = toRadian(90); // Ratio pos deg
-    this.rdistance = 5; // Ratio distance
-    
+    Render.addUpdate(this.update, this);
+    this.updateInitValues();
+
   },
 
   updateUniforms() {
     Shaders.updateUniform('proj', u => gl.uniformMatrix4fv(u, gl.FALSE, this.proj));
     Shaders.updateUniform('view', u => gl.uniformMatrix4fv(u, gl.FALSE, this.view));
   },
+  updateInitValues() {
+    this.pointToView = vec3.fromValues(GameMap.maps[Game.level-1][0].length/2-0.5, 0, GameMap.maps[Game.level-1].length/2); // Look to map center
+    this.rdistance = GameMap.maps[Game.level-1][0].length + 5; // Set distance depending of map the size
+    this.rx = toRadian(90);
+    this.ry = toRadian(90);
+    vec3.set(this.force, 0, 0, 0);
+  },
   update() {
-    
+
     if (Input.keys['ArrowLeft']) {
-      this.updateUniforms();
-      this.r += 0.025 * deltaTime;
+      this.force[0] -= this.moveSpeed * deltaTime;
     } 
     if (Input.keys['ArrowRight']) {
-      this.updateUniforms();
-      this.r -= 0.025 * deltaTime;
+      this.force[0] += this.moveSpeed * deltaTime;
     }
     if (Input.keys['ArrowUp']) {
-      this.rdistance -= 0.1 * deltaTime;
-      this.updateUniforms();
+      this.force[1] -= this.moveSpeed * deltaTime;
     }
     if (Input.keys['ArrowDown']) {
-      this.rdistance += 0.1 * deltaTime;
-      this.updateUniforms();
+      this.force[1] += this.moveSpeed * deltaTime;
+    }
+    if (Input.keys['KeyX']) {
+      this.rdistance += 0.25 * deltaTime;
+    }
+    if (Input.keys['KeyZ']) {
+      this.rdistance -= 0.25 * deltaTime;
     }
 
-    this.camX = Math.cos(this.r) * this.rdistance;
-    this.camY = Math.sin(this.r) * this.rdistance;
+    let deg = (this.ry+this.force[1])*180/Math.PI
+    if (deg >= 45 && deg <= 135) {
+      this.ry += this.force[1];
+    }
 
-    let pointToView = vec3.fromValues(GameMap.maps[0][0].length/2, 0, GameMap.maps[0].length/2);
+    deg = (this.rx+this.force[0])*180/Math.PI;
+    if (deg >= 45 && deg <= 135) {
+      this.rx += this.force[0];
+    }
+
+    this.camX = Math.cos(this.rx) * this.rdistance;
+    this.camY = Math.sin(this.rx) * Math.sin(this.ry) * this.rdistance;
+    this.camZ = Math.sin(this.rx) * this.rdistance * Math.cos(this.ry);
+
     let x = vec3.create();
-    vec3.add(x, vec3.fromValues(this.camX, 20, this.camY), pointToView);
+    vec3.add(x, vec3.fromValues(this.camX, this.camY, this.camZ), this.pointToView);
 
-    mat4.lookAt(this.view, x, pointToView, vec3.fromValues(0,1,0));
-    this.updateProjection();
+    mat4.lookAt(this.view, x, this.pointToView, vec3.fromValues(0,0,-1));
+    this.updateUniforms();
+
+    vec3.mul(this.force, this.force, vec3.fromValues(this.linearDrag, this.linearDrag, this.linearDrag)); 
 
   },
   updateProjection() {
     mat4.identity(this.proj);
-    //mat4.identity(this.view);
     mat4.perspective(this.proj, toRadian(45), canvas.clientWidth / canvas.clientHeight, 0.025, 1000.0);
     this.updateUniforms();
   }
@@ -116,7 +156,7 @@ const Camera = {
 
 // LIGHT
 const Light = {
-  pos: [40, -20, 20],
+  pos: [15, -100, 15],
   init() {
     this.updateUniformPos();
   },
@@ -134,9 +174,15 @@ const Light = {
 // RENDER
 const Render = {
   renderUpdateQueue: [],
+  renderObjectQueue: [],
+  fps: 0,
+  infoDom: document.getElementById('render-info'),
 
   onResizeWindow() {
     gl.viewport(0, 0, canvas.width, canvas.height);
+  },
+  updateRenderInfo() {
+    this.infoDom.innerText = `FPS: ${this.fps}`;
   },
 
   update() {
@@ -149,22 +195,46 @@ const Render = {
     gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT); 
 
     for (let f of this.renderUpdateQueue) {
-      f();
+      f.f.apply(f.bind);
     }
 
-    for (let object of Objects.objects) {
+    for (let object of this.renderObjectQueue) {
       gl.bindVertexArrayOES(object.vao);
 
       gl.useProgram(object.shader.program);
 
       object.render();
-    
     }
+    if (getTime() > nextSecond) {
+      nextSecond = getTime() + 1;
+      this.updateRenderInfo();
+      
+      this.fps = 0;
+    } else {
+      this.fps++;
+    }
+
     requestAnimationFrame(this.update.bind(this));
   },
 
-  addUpdate(f) {
-    this.renderUpdateQueue.push(f);
+  addUpdate(f, bind) {
+    this.renderUpdateQueue.push({f, bind});
+  },
+  addObject(o) {
+    this.renderObjectQueue.push(o);
+  },
+  popObject(o) {
+    let i = this.renderObjectQueue.findIndex(i => i == o);
+    if (i != -1) {
+      this.renderObjectQueue.splice(i, 1);
+    }
+    
+  },
+  popUpdate(f) {
+    let i = this.renderUpdateQueue.findIndex(i => i.f == f);
+    if (i != -1) {
+      this.renderUpdateQueue.splice(i, 1);
+    }
   },
 
   init() {
@@ -179,29 +249,6 @@ const Render = {
   }
 }
 
-//const Maps = {
-//,
-//}
-
-// WORLD
-const World = {
-  init() {
-    Render.addUpdate(this.update.bind(this));
-    this.loadMap();
-    Objects.init();
-    Light.init();
-    Camera.init();
-
-  },
-  update() {
-    Shaders.updateUniform('iTime', u => gl.uniform1f(u, getTime()));
-  },
-
-  loadMap() {
-    console.log()
-  }
-}
-
 // SHADERS
 const Shaders = {
   shaders: {
@@ -212,11 +259,15 @@ const Shaders = {
         #endif
 
         attribute vec3 aPos;
+        attribute vec3 aColor;
         attribute mat4 model; 
         attribute vec3 aNormal;
+        attribute float aLuminance;
 
         varying vec3 Normal;
         varying vec4 FragPos;  
+        varying vec3 color;
+        varying float luminance;
 
         uniform mat4 view;
         uniform mat4 proj;
@@ -225,6 +276,8 @@ const Shaders = {
           gl_Position = proj * view * model * vec4(aPos, 1.0);
           FragPos = model * vec4(aPos, 1.0);
           Normal = mat3(model) * aNormal;
+          color = aColor;
+          luminance = aLuminance;
         }
       `,
       fCode: `#version 100
@@ -233,16 +286,18 @@ const Shaders = {
         #endif
 
         varying vec3 Normal;
+        varying vec3 color;
         varying vec4 FragPos;
+        varying float luminance;
 
-        uniform vec3 lightPos;  
+        uniform vec3 lightPos;
         //uniform float iTime;
 
         void main(void) {
-          vec3 ambient = vec3(0.3);
+          vec3 ambient = vec3(0.3) * color * luminance;
           vec3 norm = normalize(Normal);
           vec3 lightDir = normalize(lightPos - FragPos.xyz);
-          vec3 result = vec3(dot(norm, lightDir));
+          vec3 result = vec3(max(pow(dot(norm, lightDir),3.0), 0.0));
           gl_FragColor = vec4(result + ambient, 1.0);
         }
       `,
@@ -256,11 +311,12 @@ const Shaders = {
         attribute vec3 aPos;
         attribute mat4 model; 
 
-        uniform mat4 view;
+        uniform mat4 view; // No rotate view
         uniform mat4 proj;
 
         void main(void) {
-          gl_Position = proj * view * model * vec4(aPos, 1.0);
+          vec4 a = proj * view * model * vec4(aPos, 1.0);
+          gl_Position = a;
         }
       `,
       fCode: `#version 100
@@ -334,7 +390,7 @@ const Shaders = {
         }
       }
     }
-    Render.addUpdate(this.update.bind(this));
+    Render.addUpdate(this.update, this);
   }
 }
 
@@ -349,60 +405,175 @@ function matFromPosRot(pos, rot) {
   
 }
 
+// Physics
+const PlayerPhysics = (props) => ({
+  init() {
+    this.velocity = vec3.create();
+    this.gravity = props.gravity;
+  },
+  checkColl() {
+
+  },
+  update() {
+    let gravity_delta = vec3.create();
+    vec3.mul(gravity_delta, this.gravity, vec3.fromValues(deltaTime, deltaTime, deltaTime));
+    vec3.add(this.velocity, this.velocity, gravity_delta);
+    let pos = vec3.create();
+    mat4.getTranslation(pos, this.model);
+
+    //Collisions
+    let nextPosX = pos[0] + this.velocity[0];
+    let nextPosY = pos[2] + this.velocity[1];
+    let nextPosZ = pos[2] + this.velocity[2];
+
+    const map = GameMap.maps[Game.level-1];
+
+    let collX;
+    let collY;
+    let collZ;
+    let win;
+
+    if (pos[1] > 0) {
+
+      collX = 
+         map[~~(pos[2]+0.25)][~~(nextPosX+0.25)] == 1
+      || map[~~(pos[2]+0.75)][~~(nextPosX+0.25)] == 1
+      || map[~~(pos[2]+0.25)][~~(nextPosX+0.75)] == 1
+      || map[~~(pos[2]+0.75)][~~(nextPosX+0.75)] == 1
+
+      collY = map[~~(pos[2]+0.25)][~~(pos[0]+0.25)] != 2
+      || map[~~(pos[2]+0.75)][~~(pos[0]+0.25)] != 2
+      || map[~~(pos[2]+0.25)][~~(pos[0]+0.75)] != 2
+      || map[~~(pos[2]+0.75)][~~(pos[0]+0.75)] != 2;
+
+      collZ = 
+         map[~~(nextPosZ+0.25)][~~(pos[0]+0.25)] == 1 
+      || map[~~(nextPosZ+0.75)][~~(pos[0]+0.25)] == 1
+      || map[~~(nextPosZ+0.25)][~~(pos[0]+0.75)] == 1
+      || map[~~(nextPosZ+0.75)][~~(pos[0]+0.75)] == 1;
+
+      win = map[~~(pos[2]+0.5)][~~(pos[0] + 0.5)] == 3;
+        
+    } else if (pos[1] < -3) {
+      this.onDie();
+      vec3.set(this.velocity, 0, 0, 0);
+      return;
+    }
+
+    if (collX) {
+      this.velocity[0] = 0;
+    }
+    if (collY) {
+      this.velocity[1] = 0;
+    }
+    if (collZ) {
+      this.velocity[2] = 0;
+    }
+
+    if (win) {
+      vec3.set(this.velocity, 0, 0, 0);
+      this.onWin();
+      return;
+    }
+
+    vec3.mul(this.velocity, this.velocity, vec3.fromValues(props.linearDrag, props.linearDrag, props.linearDrag));
+    mat4.translate(this.model, this.model, this.velocity);
+  }
+});
+
+
+
+// GamePlayer
+const GamePlayer = {
+  shader: Shaders.shaders.red,
+  drawType: gl.TRIANGLES,
+  attrs: {
+    aPos: { 
+      data: new Float32Array([
+        -0.25, -0.5, -0.25,
+        0.25,  -0.5, -0.25,
+        0.25,  -0.5, 0.25,
+        0.25,  -0.5, 0.25,
+        -0.25, -0.5, 0.25,
+        -0.25, -0.5, -0.25
+      ]),
+    },
+    model: {
+      data: mat4.create(),
+      instanced: true,
+      dynamic: true
+    }
+  },
+  instances: [
+    {
+      update() {
+        this.gravity[0] = -(Math.cos(Camera.rx))/100;
+        this.gravity[2] = -(Math.cos(Camera.ry))/100;
+      },
+      onWin() {
+        GameMap.delete();
+        Game.level++;
+        Camera.updateInitValues();
+        GameMap.loadMap();
+        GameMap.load();
+        Game.updateGameInfo();
+      },
+      onDie() {
+        Game.deaths++;
+        Game.updateGameInfo();
+        Camera.updateInitValues();
+        mat4.copy(this.model, this.spawnpoint);
+      }
+    }
+  ],
+  components: [
+    PlayerPhysics({ gravity: vec3.fromValues(0,-0.01,0.0), linearDrag: 0.95 })
+  ]
+  
+}
+
 // GAMEMAP
 const GameMap = {
   drawType: gl.TRIANGLES,
   shader: Shaders.shaders.myshader,
   maps: [
-    [  // LVL 1 
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-      [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
-      [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+    [
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 4, 1, 2, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 1],
+      [1, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 0, 0, 1],
+      [1, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 1, 3, 2, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    ],
+    [  // LVL 2
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 0, 0, 0, 4, 1, 2, 2, 1, 3, 1],
+      [1, 0, 1, 1, 1, 1, 2, 2, 1, 0, 1],
+      [1, 0, 1, 2, 2, 1, 2, 2, 1, 0, 1],
+      [1, 0, 0, 0, 0, 1, 2, 2, 1, 0, 1],
+      [1, 1, 1, 1, 0, 1, 2, 2, 0, 0, 1],
+      [1, 0, 0, 0, 0, 1, 2, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 1, 2, 0, 0, 0, 1],
+      [1, 0, 1, 1, 1, 1, 1, 1, 0, 2, 1],
+      [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 1, 2, 2, 2, 2, 0, 0, 0, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    ],
+    [  // LVL 3
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 0, 0, 0, 0, 1, 2, 2, 1, 3, 1],
+      [1, 0, 0, 0, 1, 1, 2, 2, 1, 0, 1],
+      [1, 0, 0, 4, 2, 1, 2, 2, 1, 0, 1],
+      [1, 0, 0, 1, 0, 1, 2, 2, 1, 0, 1],
+      [1, 1, 1, 1, 0, 1, 2, 2, 0, 0, 1],
+      [1, 0, 0, 1, 0, 1, 2, 0, 0, 0, 1],
+      [1, 0, 0, 1, 0, 1, 2, 0, 0, 0, 1],
+      [1, 0, 1, 1, 1, 1, 1, 1, 0, 2, 1],
+      [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 1, 2, 2, 2, 2, 0, 0, 0, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
     ],
   ],
   instances: [
-    /*{
-      model: mat4.create(),
-      init() {
-        mat4.fromTranslation(this.model, vec3.fromValues(-10,0,0));
-      },
-      update() {
-        //mat4.rotate(this.model, this.model, 0.2, vec3.fromValues(1, 1, 1))
-
-        let d = vec3.create();
-        if (Input.keys['KeyA']) {
-          d[0] += -0.1 * deltaTime;
-        } 
-        if (Input.keys['KeyD']) {
-          d[0] += 0.1 * deltaTime;
-        } 
-        if (Input.keys['KeyW']) {
-          d[1] += 0.1 * deltaTime;
-        } 
-        if (Input.keys['KeyS']) {
-          d[1] += -0.1 * deltaTime;
-        }
-
-        if (Input.keys['ArrowUp']) {
-          mat4.rotateY(this.model, this.model, 0.1 * deltaTime);
-        } 
-        if (Input.keys['ArrowDown']) {
-          mat4.rotateY(this.model, this.model, -0.1 * deltaTime);
-        }
-
-        mat4.translate(this.model, this.model, d);
-        
-      }
-    },*/
   ],
 
   attrs: { // Object global attributes
@@ -429,42 +600,42 @@ const GameMap = {
         1, 1, 1,
         1, 1, 1
       ])
+    },
+    aColor: {
+      data: vec3.fromValues(0,0,1),
+      instanced: true
+    },
+    aLuminance: {
+      data: new Float32Array([1.3]),
+      instanced: true
     }
   },
 
-  prepareMap(n) {
-    const map = this.maps[n-1];
+  loadMap() {
+    const map = this.maps[Game.level-1];
     const setBlock = (pos) => {
      this.instances.push(
-      {
-        model: matFromPosRot(vec3.fromValues(pos[0],pos[1],pos[2]+0.5), vec3.fromValues(0,0,0))
-      },
-      {
-        model: matFromPosRot(vec3.fromValues(pos[0],pos[1],pos[2]-0.5), vec3.fromValues(0,0,0))
-      },
-      {
-        model: matFromPosRot(vec3.fromValues(pos[0]+0.5,pos[1],pos[2]), vec3.fromValues(0,90,0))
-      },
-      {
-        model: matFromPosRot(vec3.fromValues(pos[0]-0.5,pos[1],pos[2]), vec3.fromValues(0,90,0))
-      },
-      {
-        model: matFromPosRot(vec3.fromValues(pos[0],pos[1]+0.5,pos[2]), vec3.fromValues(90,0,0))
-      }
+        {
+          model: matFromPosRot(vec3.fromValues(pos[0],pos[1],pos[2]+0.5), vec3.fromValues(0,0,0))
+        },
+        {
+          model: matFromPosRot(vec3.fromValues(pos[0],pos[1],pos[2]-0.5), vec3.fromValues(0,0,0))
+        },
+        {
+          model: matFromPosRot(vec3.fromValues(pos[0]+0.5,pos[1],pos[2]), vec3.fromValues(0,90,0))
+        },
+        {
+          model: matFromPosRot(vec3.fromValues(pos[0]-0.5,pos[1],pos[2]), vec3.fromValues(0,90,0))
+        },
+        {
+          model: matFromPosRot(vec3.fromValues(pos[0],pos[1]+0.5,pos[2]), vec3.fromValues(90,0,0))
+        }
       );
     }
 
     let y = 0;
-
-    for (let i=-1; i<=map[0].length;i++) {
-      setBlock(vec3.fromValues(i,0,-1));
-      setBlock(vec3.fromValues(i,0,map.length));
-    }
-
     for (const row of map) {
       let x = 0;
-      setBlock(vec3.fromValues(x-1,0,y));
-
       for (const el of row) {
         switch (el) {
           case 0:
@@ -477,6 +648,29 @@ const GameMap = {
             break;
           case -1:
             break;
+          case 3:
+            this.instances.push({
+              model: matFromPosRot(vec3.fromValues(x, -0.5, y), vec3.fromValues(90,0,0)),
+              aColor: vec3.fromValues(0, 1, 0),
+              aLuminance: new Float32Array([2.0])
+            });
+            break;
+          case 4:
+          
+            const playerInstance = GamePlayer.instances[0];
+            playerInstance.spawnpoint = matFromPosRot(vec3.fromValues(x, 0.1, y), vec3.create());
+
+            if (!playerInstance.model) {
+              playerInstance.model = mat4.create();
+            }
+            mat4.copy(playerInstance.model, playerInstance.spawnpoint);
+
+            this.instances.push({
+              model: matFromPosRot(vec3.fromValues(x, -0.5, y), vec3.fromValues(90,0,0)),
+              aColor: vec3.fromValues(1, 1, 0),
+              aLuminance: new Float32Array([2.0])
+            });
+            break;
         
           default:
             break;
@@ -484,20 +678,12 @@ const GameMap = {
 
         x++;
       }
-
-      setBlock(vec3.fromValues(x,0,y));
-
       y++;
     }
-/*    for (let i=1; i<20; i++) {
-      const model = mat4.create();
-
-    }
-    */
   },
 
   init() {
-    this.prepareMap(1);
+    this.loadMap();
   }
 }
 
@@ -532,132 +718,182 @@ const Triangle = {
 // OBJECTS
 const Objects = {
   objects: [
-    GameMap
+    GameMap,
+    GamePlayer
     //Triangle
   ],
 
+  loadObject(object) {
+    if (object.init) {
+      object.init();
+    }
+    
+    { // Buffers & locations
+      object.gpubuffers = {};
+      object.buffers = {};
+
+      object.vao = gl.createVertexArrayOES();
+      gl.bindVertexArrayOES(object.vao);
+
+      if (object.indices) {
+        let ebo = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, object.indices, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null); // Unbind buffer
+        object.gpubuffers.ebo = ebo;
+
+        object.render = () => {
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, object.gpubuffers.ebo);
+
+          gl.drawElementsInstancedANGLE(
+            object.drawType,
+            object.indices.length,  
+            gl.UNSIGNED_SHORT,
+            0,
+            object.instances.length
+          );
+        }
+      } else {
+        object.render = () => {
+          gl.drawArraysInstancedANGLE(
+            object.drawType,
+            0,  
+            object.attrs.aPos.data.length/3,
+            object.instances.length
+          );
+        }
+      }
+
+      object.instances.forEach((instance, c) => {
+        let updates = [];
+        if (instance.init) {
+          instance.init();
+        }
+
+        if (instance.update) {
+          Render.addUpdate(instance.update, instance);
+          updates.push(instance.update);
+        }
+        if (object.components) {
+          for (let component of object.components) {
+            if (component.init) {
+              component.init.apply(instance);
+            }
+            if (component.update) {
+              Render.addUpdate(component.update, instance);
+              updates.push(component.update);
+            }
+          }
+        }
+
+        instance.delete = () => {
+          for (let update of updates) {
+            Render.popUpdate(update);
+          }
+          let i = object.instances.findIndex(i => i == instance);
+          if (i != -1) {
+            object.instances.splice(i, 1);
+          }
+        }
+      });
+
+      for (const attr of Object.keys(object.attrs)) {
+        let { data, instanced, dynamic } = object.attrs[attr];
+        let gpubuff = gl.createBuffer();
+        const { loc, type } = object.shader.attrs[attr];
+
+        let buff;
+        if (instanced) {
+          buff = new ArrayBuffer(data.byteLength * object.instances.length);
+          object.instances.forEach((instance, c) => {
+            const newbuff = new data.__proto__.constructor(buff, c*data.byteLength, data.length);
+            if (instance[attr]) {
+              newbuff.set(instance[attr]);
+            } else {
+              newbuff.set(data);
+            }
+            instance[attr] = newbuff;
+          });
+        } else {
+          buff = data; 
+        }
+        gl.bindBuffer(gl.ARRAY_BUFFER, gpubuff);
+        gl.bufferData(gl.ARRAY_BUFFER, buff, dynamic ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW); // Set data
+        
+        switch (type) {
+          case gl.FLOAT_MAT4: 
+            gl.vertexAttribPointer(loc    , 4, gl.FLOAT, false, 16 * 4, 0);
+            gl.vertexAttribPointer(loc + 1, 4, gl.FLOAT, false, 16 * 4, 4 * 4);
+            gl.vertexAttribPointer(loc + 2, 4, gl.FLOAT, false, 16 * 4, 4 * 8);
+            gl.vertexAttribPointer(loc + 3, 4, gl.FLOAT, false, 16 * 4, 4 * 12);
+
+            if (instanced) {
+              gl.vertexAttribDivisorANGLE(loc + 1, 1);
+              gl.vertexAttribDivisorANGLE(loc + 2, 1);
+              gl.vertexAttribDivisorANGLE(loc + 3, 1);
+            }
+
+            gl.enableVertexAttribArray(loc + 1);
+            gl.enableVertexAttribArray(loc + 2);
+            gl.enableVertexAttribArray(loc + 3);
+            break;
+
+          case gl.FLOAT_VEC2: 
+            gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+            break;
+
+          case gl.FLOAT_VEC3:
+            gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+            break;
+          
+          case gl.FLOAT:
+            gl.vertexAttribPointer(loc, 1, gl.FLOAT, false, 0, 0);
+            break;
+        }
+
+        if (instanced) {
+          gl.vertexAttribDivisorANGLE(loc, 1);
+        }
+
+        gl.enableVertexAttribArray(loc);
+
+        object.buffers[attr] = buff;
+        object.gpubuffers[attr] = gpubuff;
+
+        if (dynamic) {
+          Render.addUpdate(() => {
+            gl.bindBuffer(gl.ARRAY_BUFFER, gpubuff);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, object.buffers[attr]);
+          });
+        }
+
+      }
+
+      object.delete = () => {
+        // Stop rendering
+        Render.popObject(object);
+        
+        // Delete all buffers
+        for (let i = object.instances.length-1; i>=0; i--) {
+          object.instances[i].delete();
+        }
+        for (let [name, buffer] of Object.entries(object.gpubuffers)) {
+          gl.deleteBuffer(buffer);
+          delete object[name];
+        }
+        // Delete vao
+        gl.deleteVertexArrayOES(object.vao);
+      }
+
+      Render.addObject(object);
+    }
+       
+  },
+
   init() {
     for (let object of this.objects) {
-      if (object.init) {
-        object.init();
-      }
-      
-      { // Buffers & locations
-        object.gpubuffers = {};
-        object.buffers = {};
-
-        object.vao = gl.createVertexArrayOES();
-        gl.bindVertexArrayOES(object.vao);
-
-        if (object.indices) {
-          let ebo = gl.createBuffer();
-          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-          gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, object.indices, gl.STATIC_DRAW);
-          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null); // Unbind buffer
-          object.gpubuffers.ebo = ebo;
-
-          object.render = () => {
-            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, object.gpubuffers.ebo);
-
-            gl.drawElementsInstancedANGLE(
-              object.drawType,
-              object.indices.length,  
-              gl.UNSIGNED_SHORT,
-              0,
-              object.instances.length
-            );
-          }
-        } else {
-          object.render = () => {
-            gl.drawArraysInstancedANGLE(
-              object.drawType,
-              0,  
-              object.attrs.aPos.data.length/3,
-              object.instances.length
-            );
-          }
-        }
-
-        object.instances.forEach((instance, c) => {
-          if (instance.init) {
-            instance.init();
-          }
-
-          if (instance.update) {
-            Render.addUpdate(instance.update.bind(instance));
-          }
-        });
-
-        for (const attr of Object.keys(object.attrs)) {
-          let { data, instanced, dynamic } = object.attrs[attr];
-          let gpubuff = gl.createBuffer();
-          const { loc, type } = object.shader.attrs[attr];
-
-          let buff;
-          if (instanced) {
-            buff = new ArrayBuffer(data.byteLength * object.instances.length);
-            object.instances.forEach((instance, c) => {
-              const newbuff = new data.__proto__.constructor(buff, c*data.byteLength, data.length);
-              if (instance[attr]) {
-                newbuff.set(instance[attr]);
-              } else {
-                newbuff.set(data);
-              }
-              instance[attr] = newbuff;
-            });
-          } else {
-            buff = data; 
-          }
-          gl.bindBuffer(gl.ARRAY_BUFFER, gpubuff);
-          gl.bufferData(gl.ARRAY_BUFFER, buff, dynamic ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW); // Set data
-          
-          switch (type) {
-            case 35676: // MAT4
-              gl.vertexAttribPointer(loc    , 4, gl.FLOAT, false, 16 * 4, 0);
-              gl.vertexAttribPointer(loc + 1, 4, gl.FLOAT, false, 16 * 4, 4 * 4);
-              gl.vertexAttribPointer(loc + 2, 4, gl.FLOAT, false, 16 * 4, 4 * 8);
-              gl.vertexAttribPointer(loc + 3, 4, gl.FLOAT, false, 16 * 4, 4 * 12);
-
-              if (instanced) {
-                gl.vertexAttribDivisorANGLE(loc + 1, 1);
-                gl.vertexAttribDivisorANGLE(loc + 2, 1);
-                gl.vertexAttribDivisorANGLE(loc + 3, 1);
-              }
-
-              gl.enableVertexAttribArray(loc + 1);
-              gl.enableVertexAttribArray(loc + 2);
-              gl.enableVertexAttribArray(loc + 3);
-              break;
-
-            case 35664: // VEC2
-              gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-              break;
-
-            case 35665: // VEC3
-              gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
-              break;
-          }
-
-          if (instanced) {
-            gl.vertexAttribDivisorANGLE(loc, 1);
-          }
-
-          gl.enableVertexAttribArray(loc);
-
-          object.buffers[attr] = buff;
-          object.gpubuffers[attr] = gpubuff;
-
-          if (dynamic) {
-            Render.addUpdate(() => {
-              gl.bindBuffer(gl.ARRAY_BUFFER, gpubuff);
-              gl.bufferSubData(gl.ARRAY_BUFFER, 0, object.buffers[attr]);
-            });
-          }
-
-        }
-
-        
-      }
+      object.load = () => this.loadObject(object);
+      this.loadObject(object);
     }
     
   }
@@ -666,10 +902,13 @@ const Objects = {
 if (gl) {
   Window.init();
   Shaders.init();
-  World.init();
+  Objects.init();
+  Light.init();
+  Camera.init();
   Input.init();
   Render.init();
 } else {
-  alert('webgl not suported');
+  document.getElementById('no-webgl').classList.remove('hidden');
 }
+
 
