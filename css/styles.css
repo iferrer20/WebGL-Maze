@@ -2,6 +2,7 @@ body, html {
   margin: 0px;
   width: 100%;
   height: 100%;
+  font-family: Arial, Helvetica, sans-serif;
 }
 #game-info, #render-info {
   position: absolute;
@@ -14,12 +15,37 @@ body, html {
 #game-info {
   top: 40px;
 }
-#no-webgl {
+#info-hvr {
+  position: absolute;
+  color: white;
+  font-weight: bold;
+  top: 40px;
+  right: 20px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(87, 87, 87, 0.246);
+  cursor: pointer;
+}
+#controls {
+  position: absolute;
+  width: 450px;
+  color: white;
+  top: 90px;
+  right: 20px;
+  background-color: rgba(87, 87, 87, 0.246);
+  padding: 20px;
+}
+
+.centered {
   position: absolute;
   color: black;
-  font-family: Arial, Helvetica, sans-serif;
+  
   top: 50%;
   left: 50%;
+  text-align: center;
   transform: translate(-50%, -50%);
   
 }

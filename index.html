@@ -11,8 +11,23 @@
   </head>
   <body>
     <span id="render-info"></span>
+    <div id="info-hvr">?</div>
+    <div id="controls" class="hidden">
+      Controles 
+      <br>
+      Mover tablero: ← ↑ → (Shift para mayor presición)
+      <br>
+      Zoom in: z
+      <br>
+      Zoom out: x
+    </div>
     <span id="game-info">aa</span>
-    <h1 class="hidden" id="no-webgl">WebGL Not supported</h1>
+    <h1 class="hidden centered" id="no-webgl">WebGL Not supported</h1>
+    <h1 class="hidden centered" id="no-levels">
+      The end!
+      <br>
+      No levels left
+    </h1>
     <canvas id="glcanvas"></canvas>
   </body>
 </html>

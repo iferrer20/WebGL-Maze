@@ -15,31 +15,49 @@ gl.drawElementsInstancedANGLE = instance_ext.drawElementsInstancedANGLE.bind(ins
 gl.drawArraysInstancedANGLE = instance_ext.drawArraysInstancedANGLE.bind(instance_ext); 
 
 // Current time start
-const timeStart = Date.now()/1000;
 var timeLastFrame = Date.now();
 var deltaTime = Date.now();
 var nextSecond = 0;
 
 function getTime() {
-  return (Date.now()/1000)-timeStart;
+  return performance.now()/1000;
 }
 
 // Math utilities 
 const { vec3, vec2, mat3, mat4, quat } = glMatrix;
 const { toRadian } = glMatrix.glMatrix; 
+const clamp = (num, min, max) => Math.min(Math.max(num, min), max);
 
 // GAME
 const Game = {
   level: 1,
   deaths: 0,
+  time: 0,
+  timeScore: localStorage.getItem('timeScore'),
   infoDom: document.getElementById('game-info'),
+  timeStart: getTime(),
+  updateGameScore() {
+    if (this.time >= this.score && this.score != 0) {
+      return;
+    }
+
+    this.timeScore[this.level] = this.time;
+    localStorage.setItem('timeScore', JSON.stringify(this.timeScore));
+  },
   updateGameInfo() {
+    let score = this.timeScore[this.level];
+    this.score = score ? score : 0;
+    this.time = getTime() - this.timeStart;
     this.infoDom.innerText = `
     Level: ${this.level}
     Attempts: ${this.deaths}
+    TimeScore: ${this.score.toFixed(3)}
+    Time: ${this.time.toFixed(3)}
     `;
   }
 }
+Game.timeScore = localStorage.getItem('timeScore');
+Game.timeScore = Game.timeScore ? JSON.parse(Game.timeScore) : {};
 Game.updateGameInfo();
 
 // WINDOW
@@ -77,11 +95,14 @@ const Camera = {
   proj: mat4.create(),
   view: mat4.create(),
   force: vec3.create(),
-  linearDrag: 0.9,
+  linearDrag: 0.8,
   moveSpeed: 0.005,
+  shiftMoveSpeed: 0.001,
   rx: toRadian(90),
   ry: toRadian(90),
   rdistance: 20,
+  maxZoomIn: 4,
+  maxZoomOut: 60,
 
   init() {
     Window.addResizeCallback(this.updateProjection.bind(this));
@@ -97,25 +118,25 @@ const Camera = {
     Shaders.updateUniform('view', u => gl.uniformMatrix4fv(u, gl.FALSE, this.view));
   },
   updateInitValues() {
-    this.pointToView = vec3.fromValues(GameMap.maps[Game.level-1][0].length/2-0.5, 0, GameMap.maps[Game.level-1].length/2); // Look to map center
+    this.pointToView = vec3.fromValues(GameMap.maps[Game.level-1][0].length/2-0.5, 0, GameMap.maps[Game.level-1].length/2-0.5); // Look to map center
     this.rdistance = GameMap.maps[Game.level-1][0].length + 5; // Set distance depending of map the size
     this.rx = toRadian(90);
     this.ry = toRadian(90);
     vec3.set(this.force, 0, 0, 0);
   },
   update() {
-
+    let moveSpeed = Input.keys['ShiftLeft'] ? this.shiftMoveSpeed : this.moveSpeed;
     if (Input.keys['ArrowLeft']) {
-      this.force[0] -= this.moveSpeed * deltaTime;
+      this.force[0] -= moveSpeed;
     } 
     if (Input.keys['ArrowRight']) {
-      this.force[0] += this.moveSpeed * deltaTime;
+      this.force[0] += moveSpeed;
     }
     if (Input.keys['ArrowUp']) {
-      this.force[1] -= this.moveSpeed * deltaTime;
+      this.force[1] -= moveSpeed;
     }
     if (Input.keys['ArrowDown']) {
-      this.force[1] += this.moveSpeed * deltaTime;
+      this.force[1] += moveSpeed;
     }
     if (Input.keys['KeyX']) {
       this.rdistance += 0.25 * deltaTime;
@@ -124,14 +145,16 @@ const Camera = {
       this.rdistance -= 0.25 * deltaTime;
     }
 
+    this.rdistance = clamp(this.rdistance, this.maxZoomIn, this.maxZoomOut);
+
     let deg = (this.ry+this.force[1])*180/Math.PI
     if (deg >= 45 && deg <= 135) {
-      this.ry += this.force[1];
+      this.ry += this.force[1] * deltaTime;
     }
 
     deg = (this.rx+this.force[0])*180/Math.PI;
     if (deg >= 45 && deg <= 135) {
-      this.rx += this.force[0];
+      this.rx += this.force[0] * deltaTime;
     }
 
     this.camX = Math.cos(this.rx) * this.rdistance;
@@ -176,6 +199,7 @@ const Render = {
   renderUpdateQueue: [],
   renderObjectQueue: [],
   fps: 0,
+  stop: false,
   infoDom: document.getElementById('render-info'),
 
   onResizeWindow() {
@@ -185,36 +209,51 @@ const Render = {
     this.infoDom.innerText = `FPS: ${this.fps}`;
   },
 
-  update() {
-    // Delta time
-    deltaTime = Date.now()-timeLastFrame;
-    deltaTime /= 10;
-    timeLastFrame = Date.now();
+  async nextFrame() {
+    return new Promise((res, e) => {
+      requestAnimationFrame(() => {
+        res();
+      });
+    });
+  },
 
-    gl.clearColor(0.1, 0.0, 0.3, 1.0);
-    gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT); 
-
-    for (let f of this.renderUpdateQueue) {
-      f.f.apply(f.bind);
-    }
-
-    for (let object of this.renderObjectQueue) {
-      gl.bindVertexArrayOES(object.vao);
-
-      gl.useProgram(object.shader.program);
-
-      object.render();
-    }
-    if (getTime() > nextSecond) {
-      nextSecond = getTime() + 1;
-      this.updateRenderInfo();
+  async render() {
+    for (;!this.stop;) {
+      // Delta time
+      deltaTime = performance.now()-timeLastFrame;
+      deltaTime /= 10;
+      deltaTime = clamp(deltaTime, 0, 30);
       
-      this.fps = 0;
-    } else {
-      this.fps++;
-    }
+      timeLastFrame = performance.now();
 
-    requestAnimationFrame(this.update.bind(this));
+      gl.clearColor(0.1, 0.0, 0.3, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT); 
+
+      for (let f of this.renderUpdateQueue) {
+        f.f.apply(f.bind);
+      }
+
+      for (let object of this.renderObjectQueue) {
+        gl.bindVertexArrayOES(object.vao);
+
+        gl.useProgram(object.shader.program);
+
+        object.render();
+      }
+      if (getTime() > nextSecond) {
+        nextSecond = getTime() + 1;
+        this.updateRenderInfo();
+        
+        this.fps = 0;
+      } else {
+        this.fps++;
+      }
+      Game.updateGameInfo();
+
+      await this.nextFrame();
+    }
+ 
+    
   },
 
   addUpdate(f, bind) {
@@ -244,8 +283,7 @@ const Render = {
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
 
-
-    this.update();
+    this.render();
   }
 }
 
@@ -405,7 +443,7 @@ function matFromPosRot(pos, rot) {
   
 }
 
-// Physics
+// PLAYERPHYSICS
 const PlayerPhysics = (props) => ({
   init() {
     this.velocity = vec3.create();
@@ -415,16 +453,25 @@ const PlayerPhysics = (props) => ({
 
   },
   update() {
-    let gravity_delta = vec3.create();
-    vec3.mul(gravity_delta, this.gravity, vec3.fromValues(deltaTime, deltaTime, deltaTime));
-    vec3.add(this.velocity, this.velocity, gravity_delta);
+    vec3.add(this.velocity, this.velocity, this.gravity);
+
+    for (let i=0; i<=2; i++) {
+      if (i == 1) continue;
+      this.velocity[i] = clamp(
+        this.velocity[i], 
+        -((this.velocity[i]/20) + Math.abs(this.gravity[i]) * 30),
+        ((this.velocity[i]/20) + Math.abs(this.gravity[i] * 30))
+      );
+    }
+
     let pos = vec3.create();
     mat4.getTranslation(pos, this.model);
 
+
     //Collisions
-    let nextPosX = pos[0] + this.velocity[0];
-    let nextPosY = pos[2] + this.velocity[1];
-    let nextPosZ = pos[2] + this.velocity[2];
+    let nextPosX = pos[0] + this.velocity[0] * deltaTime;
+    let nextPosY = pos[2] + this.velocity[1] * deltaTime;
+    let nextPosZ = pos[2] + this.velocity[2] * deltaTime;
 
     const map = GameMap.maps[Game.level-1];
 
@@ -441,10 +488,11 @@ const PlayerPhysics = (props) => ({
       || map[~~(pos[2]+0.25)][~~(nextPosX+0.75)] == 1
       || map[~~(pos[2]+0.75)][~~(nextPosX+0.75)] == 1
 
-      collY = map[~~(pos[2]+0.25)][~~(pos[0]+0.25)] != 2
-      || map[~~(pos[2]+0.75)][~~(pos[0]+0.25)] != 2
-      || map[~~(pos[2]+0.25)][~~(pos[0]+0.75)] != 2
-      || map[~~(pos[2]+0.75)][~~(pos[0]+0.75)] != 2;
+      collY = 
+         map[~~(pos[2]+0.45)][~~(pos[0]+0.45)] != 2
+      || map[~~(pos[2]+0.55)][~~(pos[0]+0.45)] != 2
+      || map[~~(pos[2]+0.45)][~~(pos[0]+0.55)] != 2
+      || map[~~(pos[2]+0.55)][~~(pos[0]+0.55)] != 2;
 
       collZ = 
          map[~~(nextPosZ+0.25)][~~(pos[0]+0.25)] == 1 
@@ -476,14 +524,15 @@ const PlayerPhysics = (props) => ({
       return;
     }
 
-    vec3.mul(this.velocity, this.velocity, vec3.fromValues(props.linearDrag, props.linearDrag, props.linearDrag));
-    mat4.translate(this.model, this.model, this.velocity);
+    const velocityDelta = vec3.create();
+    vec3.mul(velocityDelta, this.velocity, vec3.fromValues(deltaTime,deltaTime,deltaTime));
+    mat4.translate(this.model, this.model, velocityDelta);
   }
 });
 
 
 
-// GamePlayer
+// GAMEPLAYER
 const GamePlayer = {
   shader: Shaders.shaders.red,
   drawType: gl.TRIANGLES,
@@ -511,23 +560,31 @@ const GamePlayer = {
         this.gravity[2] = -(Math.cos(Camera.ry))/100;
       },
       onWin() {
+        Game.updateGameScore();
         GameMap.delete();
         Game.level++;
-        Camera.updateInitValues();
-        GameMap.loadMap();
-        GameMap.load();
-        Game.updateGameInfo();
+        if (Game.level <= GameMap.maps.length) {
+          Camera.updateInitValues();
+          GameMap.loadMap();
+          GameMap.load();
+          Game.timeStart = getTime();
+        } else {
+          document.getElementById('glcanvas').remove();
+          document.getElementById('no-levels').classList.remove('hidden');
+          Render.stop = true;
+        }
+        
       },
       onDie() {
         Game.deaths++;
-        Game.updateGameInfo();
+        Game.timeStart = getTime();
         Camera.updateInitValues();
         mat4.copy(this.model, this.spawnpoint);
       }
     }
   ],
   components: [
-    PlayerPhysics({ gravity: vec3.fromValues(0,-0.01,0.0), linearDrag: 0.95 })
+    PlayerPhysics({ gravity: vec3.fromValues(0,-0.01,0.0) })
   ]
   
 }
@@ -559,18 +616,26 @@ const GameMap = {
       [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
     ],
     [  // LVL 3
-      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-      [1, 0, 0, 0, 0, 1, 2, 2, 1, 3, 1],
-      [1, 0, 0, 0, 1, 1, 2, 2, 1, 0, 1],
-      [1, 0, 0, 4, 2, 1, 2, 2, 1, 0, 1],
-      [1, 0, 0, 1, 0, 1, 2, 2, 1, 0, 1],
-      [1, 1, 1, 1, 0, 1, 2, 2, 0, 0, 1],
-      [1, 0, 0, 1, 0, 1, 2, 0, 0, 0, 1],
-      [1, 0, 0, 1, 0, 1, 2, 0, 0, 0, 1],
-      [1, 0, 1, 1, 1, 1, 1, 1, 0, 2, 1],
-      [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-      [1, 1, 2, 2, 2, 2, 0, 0, 0, 0, 1],
-      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 2, 1],
+      [1, 0, 0, 0, 0, 0, 1, 1, 2, 2, 0, 0, 0, 0, 0, 0, 1, 0, 2, 1],
+      [1, 0, 0, 1, 2, 0, 2, 1, 2, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1],
+      [1, 0, 0, 1, 2, 0, 2, 1, 2, 2, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1],
+      [1, 2, 0, 1, 2, 0, 2, 1, 2, 2, 0, 0, 2, 1, 0, 0, 1, 2, 0, 1],
+      [1, 2, 0, 1, 2, 0, 2, 1, 2, 2, 0, 0, 2, 1, 0, 2, 1, 2, 0, 1],
+      [1, 2, 0, 1, 2, 0, 2, 1, 2, 2, 3, 3, 2, 1, 0, 2, 1, 0, 0, 1],
+      [1, 0, 0, 1, 2, 0, 2, 1, 2, 2, 3, 3, 2, 1, 0, 0, 1, 0, 0, 1],
+      [1, 0, 2, 1, 2, 0, 2, 1, 2, 2, 2, 2, 2, 2, 1, 0, 1, 0, 2, 1],
+      [1, 0, 2, 1, 2, 0, 2, 1, 2, 2, 2, 2, 2, 2, 1, 0, 1, 0, 2, 1],
+      [1, 0, 2, 1, 2, 0, 2, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1],
+      [1, 0, 2, 1, 2, 0, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 1, 0, 0, 1],
+      [1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 1],
+      [1, 2, 0, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 0, 1],
+      [1, 2, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1],
+      [1, 2, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1],
+      [1, 1, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
     ],
   ],
   instances: [
@@ -897,6 +962,14 @@ const Objects = {
     }
     
   }
+}
+
+const controls = document.getElementById('controls');
+document.getElementById('info-hvr').onmouseenter = () => {
+  controls.classList.remove('hidden'); 
+}
+document.getElementById('info-hvr').onmouseleave = () => {
+  controls.classList.add('hidden'); 
 }
 
 if (gl) {
